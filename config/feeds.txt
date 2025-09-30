@@ -1,0 +1,43 @@
+https://news.yahoo.co.jp/rss/media/iat/all.xml
+https://news.yahoo.co.jp/rss/media/ibciwatev/all.xml
+https://news.yahoo.co.jp/rss/media/iwanichi/all.xml
+https://news.yahoo.co.jp/rss/media/iwatenpv/all.xml
+https://news.yahoo.co.jp/rss/media/nmit/all.xml
+https://news.yahoo.co.jp/rss/media/tvi/all.xml
+
+https://www.pref.iwate.jp/news.rss | = 統計 推移
+https://www.city.morioka.iwate.jp/news.rss | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.miyako.iwate.jp/cgi-bin/feed.php | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.ofunato.iwate.jp/feed/latest.xml | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.hanamaki.iwate.jp/news.rss | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.kitakami.iwate.jp/cgi-bin/feed.php | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.kuji.lg.jp/cgi-bin/feed.php?siteNew | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.tono.iwate.jp/rss.xml | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.ichinoseki.iwate.jp/rss.xml | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+# 陸前高田市なし
+https://www.city.kamaishi.iwate.jp/category/kubun/news/index.rss | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.ninohe.lg.jp/RSSFeed/whatsnew | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.hachimantai.lg.jp/rss/10/list1.xml | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.oshu.iwate.jp/cgi-bin/feed.php | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.city.takizawa.iwate.jp/feed/latest.xml | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+# 雫石町なし
+# 葛巻町なし
+https://town.iwate.iwate.jp/town/feed/ | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+# 紫波町なし
+# 矢巾町あとまわし
+https://www.town.nishiwaga.lg.jp/cgi-bin/feed.php | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.town.kanegasaki.iwate.jp/articles/index.rss | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+# 平泉町なし
+https://www.town.sumita.iwate.jp/shinchaku/index.rss | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.town.otsuchi.iwate.jp/gyosei/recent/rss.xml | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.town.yamada.iwate.jp/oshirase/rss.xml | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+# 岩泉なし
+https://www.vill.tanohata.iwate.jp/shinchaku/index.rss | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+https://www.vill.fudai.iwate.jp/oshirase/rss.xml | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+# 軽米なし
+# 野田なし
+https://www.vill.kunohe.iwate.jp/oshirase/rss.xml | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+# 洋野町なし
+https://www.town.ichinohe.iwate.jp/cgi-bin/feed.php | = 都市計画 用途地域 立地適正化 区画整理 地区計画
+
+# MLIT（「ALLでも除外語を効かせたい」なら③のパッチを入れる）
