@@ -260,18 +260,18 @@ def build_html(items):
         groups.setdefault(day, []).append(it)
 
     parts = [
-        "<!DOCTYPE html>",
-        "<html lang=\"ja\">",
-        "<meta charset=\"utf-8\">",
-        f"<title>{html.escape(SITE_TITLE)}</title>",
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
-        f"<meta name=\"description\" content=\"{html.escape(SITE_DESC)}\">",
-        f"<style>{css}</style>",
-        "<body>",
-        "<header>",
-        f"<h1>{html.escape(SITE_TITLE)}</h1>",
-        f'<div class="desc">{html.escape(SITE_DESC)}</div>',
-        "</header>",
+    "<!DOCTYPE html>",
+    "<html lang=\"ja\">",
+    "<meta charset=\"utf-8\">",
+    f"<title>{html.escape(SITE_TITLE)}</title>",
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+    f"<meta name=\"description\" content=\"{html.escape(SITE_DESC)}\">",
+    f"<style>{css}</style>",
+    "<body>",
+    "<header>",
+    f"<h1>{html.escape(SITE_TITLE)}</h1>",
+    f'<div class="desc">{SITE_DESC}</div>',   # ← escape を外した
+    "</header>",
     ]
     for day in sorted(groups.keys(), reverse=True):
         parts.append(f"<div class=\"date\">📅 {day}</div>")
