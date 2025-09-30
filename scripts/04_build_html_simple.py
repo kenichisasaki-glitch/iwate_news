@@ -22,8 +22,8 @@ CONFIG_DIR = ROOT / "config"
 SITE_DIR = ROOT / "site"
 SITE_DIR.mkdir(parents=True, exist_ok=True)
 
-SITE_TITLE = "岩手県 不動産まとめサイト"
-SITE_DESC  = "岩手の不動産に関する話題をまとめたニュースサイトです。"
+SITE_TITLE = "岩手県 不動産まとめサイト（自動更新）"
+SITE_DESC  = '<a href="https://www.greo-jp.com/" target="_blank">GREO合同会社が運営するまとめサイトです。</a>'
 MAX_ITEMS = 300
 
 socket.setdefaulttimeout(6)  # ネットワーク全体の安全タイムアウト（秒）
@@ -286,7 +286,7 @@ def build_html(items):
                 f"</div>"
             )
     parts += [
-        "<footer>岩手県 不動産まとめサイト（自動更新）</footer>",
+        '<footer><a href="https://www.greo-jp.com/" target="_blank">Operated by GREO</a></footer>',
         "</body></html>",
     ]
     out = SITE_DIR / "index.html"
