@@ -22,8 +22,8 @@ CONFIG_DIR = ROOT / "config"
 SITE_DIR = ROOT / "site"
 SITE_DIR.mkdir(parents=True, exist_ok=True)
 
-SITE_TITLE = "岩手県 不動産ニュースまとめ（見出し＋リンク）"
-SITE_DESC  = "RSSからキーワードで抽出（要約なし・軽量MVP）"
+SITE_TITLE = "岩手県 不動産まとめサイト"
+SITE_DESC  = "岩手の不動産に関する話題をまとめたニュースサイトです。"
 MAX_ITEMS = 300
 
 socket.setdefaulttimeout(6)  # ネットワーク全体の安全タイムアウト（秒）
@@ -37,7 +37,7 @@ GLOBAL_INCLUDE = [
     "PFI","PPP","土地","建物","老朽化","建て替え","建替","物件","着工","閉館",
     "竣工","解体","開業","閉業","開店","閉店","用途変更","売却","譲渡","利活用",
     "店舗","工場","観光","ホテル","経済効果","統計","推移","土地","建物",
-    "建築","閉校","廃校","統廃合","跡地"
+    "建築","閉校","廃校","統廃合","跡地","ピカデリー"
 ]
 
 GLOBAL_EXCLUDE = [
@@ -286,7 +286,7 @@ def build_html(items):
                 f"</div>"
             )
     parts += [
-        "<footer>自動生成（見出し＋リンク／フィード別「追加・上書き・ALL」対応）</footer>",
+        "<footer>岩手県 不動産まとめサイト（自動更新）</footer>",
         "</body></html>",
     ]
     out = SITE_DIR / "index.html"
