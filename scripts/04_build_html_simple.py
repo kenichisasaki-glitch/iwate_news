@@ -4,6 +4,7 @@
 # ・ALL でも 3列目の除外語は有効
 # ・日本語の表記ゆれに強くするため NFKC 正規化
 
+import os
 import re
 import html
 import time
