@@ -1,0 +1,7 @@
+git config --global user.name "kenichisasaki-glitch"
+git config --global user.email "kenichi.sasaki@greo-jp.com"
+
+
+git branch -M main
+git remote add origin https://github.com/kenichisasaki-glitch/iwate_news.git
+git push -u origin main

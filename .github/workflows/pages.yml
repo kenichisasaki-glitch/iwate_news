@@ -1,26 +1,28 @@
 name: build-and-deploy
-
 on:
+  workflow_dispatch: {}
   schedule:
-    # 毎日 07:00 JST（= 前日22:00 UTC）
-    - cron: "0 22 * * *"
-  workflow_dispatch: {}  # 手動実行用
-
+    - cron: "0 22 * * *"   # JST 07:00
 permissions:
   contents: read
   pages: write
   id-token: write
-
 concurrency:
   group: "pages"
   cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Show workspace (pre)
+        run: |
+          pwd
+          ls -la
+          echo "----"
+          find . -maxdepth 3 -type f | sort
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -29,21 +31,30 @@ jobs:
 
       - name: Install deps
         run: |
+          python -V
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip list
+
+      - name: Sanity check files
+        run: |
+          test -f scripts/04_build_html_simple.py
+          test -f requirements.txt
+          test -f config/feeds.txt || (echo "WARN: config/feeds.txt が見つかりません（DEFAULT_FEEDSで実行）" && true)
 
       - name: Build site (RSS → HTML)
         env:
           IWATE_ROOT: ${{ github.workspace }}
         run: |
+          set -eux
           python scripts/04_build_html_simple.py
+          ls -la site
           test -f site/index.html
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
-
   deploy:
     needs: build
     runs-on: ubuntu-latest
