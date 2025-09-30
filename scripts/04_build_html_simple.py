@@ -22,7 +22,7 @@ CONFIG_DIR = ROOT / "config"
 SITE_DIR = ROOT / "site"
 SITE_DIR.mkdir(parents=True, exist_ok=True)
 
-SITE_TITLE = "岩手県 不動産まとめサイト（自動更新）"
+SITE_TITLE = "岩手県 不動産まとめサイト<br>（毎日7:00自動更新）"
 SITE_DESC  = '<a href="https://www.greo-jp.com/" target="_blank">GREO合同会社が運営するまとめサイトです。</a>'
 MAX_ITEMS = 300
 
