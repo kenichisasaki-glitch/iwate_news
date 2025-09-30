@@ -269,7 +269,7 @@ def build_html(items):
     f"<style>{css}</style>",
     "<body>",
     "<header>",
-    f"<h1>{html.escape(SITE_TITLE)}</h1>",
+    f"<h1>{SITE_TITLE}</h1>",
     f'<div class="desc">{SITE_DESC}</div>',   # ← escape を外した
     "</header>",
     ]
