@@ -37,8 +37,8 @@ GLOBAL_INCLUDE = [
     "都市計画","用途地域","市街化","地区計画","立地適正化","再開発","再整備","再生",
     "PFI","PPP","土地","建物","老朽化","建て替え","建替","物件","着工","閉館",
     "竣工","解体","開業","閉業","開店","閉店","用途変更","売却","譲渡","利活用",
-    "店舗","工場","観光","ホテル","経済効果","統計","推移",
-    "建築","閉校","廃校","統廃合","跡地","旅館","温泉","改修",
+    "店舗","工場","観光","ホテル","経済効果","統計","推移","施設","老人ホーム",
+    "建築","閉校","廃校","統廃合","跡地","旅館","温泉","改修","ショッピングセンター",
 ]
 
 GLOBAL_EXCLUDE = [
@@ -266,25 +266,33 @@ def build_html(items):
     a:hover{text-decoration:underline}
     footer{color:#777;font-size:.85rem;margin-top:24px}
     """
+
+    # 日付ごとにグルーピング
     groups = {}
     for it in items:
         day = iso_to_ymd_jst(it["published"]) or "日付不明"
         groups.setdefault(day, []).append(it)
 
+    # 最終更新表示用（ローカルタイムゾーンで表示）
+    now_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+
     parts = [
-    "<!DOCTYPE html>",
-    "<html lang=\"ja\">",
-    "<meta charset=\"utf-8\">",
-    f"<title>{html.escape(SITE_TITLE_TEXT)}</title>",   # ← 改行なし
-    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
-    f"<meta name=\"description\" content=\"{html.escape(SITE_DESC)}\">",
-    f"<style>{css}</style>",
-    "<body>",
-    "<header>",
-    f"<h1>{SITE_TITLE_HTML}</h1>",                      # ← 見出しには改行あり
-    f'<div class="desc">{SITE_DESC}</div>',
-    "</header>",
+        "<!DOCTYPE html>",
+        "<html lang=\"ja\">",
+        "<head>",
+        "<meta charset=\"utf-8\">",
+        f"<title>{html.escape(SITE_TITLE_TEXT)}</title>",  # タブ用（改行なし）
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        f"<meta name=\"description\" content=\"{html.escape(SITE_DESC)}\">",
+        f"<style>{css}</style>",
+        "</head>",
+        "<body>",
+        "<header>",
+        f"<h1>{SITE_TITLE_HTML}</h1>",                      # 見出し用（改行ありOK）
+        f'<div class="desc">{SITE_DESC}</div>',
+        "</header>",
     ]
+
     for day in sorted(groups.keys(), reverse=True):
         parts.append(f"<div class=\"date\">📅 {day}</div>")
         for it in groups[day]:
@@ -297,12 +305,25 @@ def build_html(items):
                 f"<div class=\"meta\">出典: {src}</div>"
                 f"</div>"
             )
+
     parts += [
-        '<footer><a href="https://www.greo-jp.com/" target="_blank">Operated by GREO</a></footer>',
+        f'<footer>最終更新: {now_str}（JST）｜ <a href="https://www.greo-jp.com/" target="_blank">Operated by GREO</a></footer>',
         "</body></html>",
     ]
+
+    # HTML文字列を一度作って、index と archive の両方へ書き出し
+    html_text = "\n".join(parts)
+
+    # 最新
     out = SITE_DIR / "index.html"
-    out.write_text("\n".join(parts), encoding="utf-8")
+    out.write_text(html_text, encoding="utf-8")
+
+    # アーカイブ（削除なしで貯める）
+    archive_dir = SITE_DIR / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive_name = datetime.now().strftime("%Y-%m-%d") + ".html"
+    (archive_dir / archive_name).write_text(html_text, encoding="utf-8")
+
     return out
 
 def main():
