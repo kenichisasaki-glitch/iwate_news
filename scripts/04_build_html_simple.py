@@ -24,7 +24,7 @@ SITE_DIR.mkdir(parents=True, exist_ok=True)
 
 SITE_TITLE = "岩手県 不動産まとめサイト<br>（毎日7:00自動更新）"
 SITE_DESC  = '<a href="https://www.greo-jp.com/" target="_blank">GREO合同会社が運営するまとめサイトです。</a>'
-MAX_ITEMS = 300
+MAX_ITEMS = 1000
 
 socket.setdefaulttimeout(6)  # ネットワーク全体の安全タイムアウト（秒）
 
@@ -33,11 +33,11 @@ GLOBAL_INCLUDE = [
     "不動産","地価","地価調査","公示地価","路線価","固定資産税","地価指数",
     "住宅","空き家","空家","賃貸","分譲","マンション","戸建","団地",
     "用地","用地取得","収用","保留地","造成","宅地","宅地造成","区画","区画整理",
-    "都市計画","用途地域","市街化","地区計画","立地適正化","再開発","再整備",
+    "都市計画","用途地域","市街化","地区計画","立地適正化","再開発","再整備","再生",
     "PFI","PPP","土地","建物","老朽化","建て替え","建替","物件","着工","閉館",
     "竣工","解体","開業","閉業","開店","閉店","用途変更","売却","譲渡","利活用",
-    "店舗","工場","観光","ホテル","経済効果","統計","推移","土地","建物",
-    "建築","閉校","廃校","統廃合","跡地","ピカデリー"
+    "店舗","工場","観光","ホテル","経済効果","統計","推移",
+    "建築","閉校","廃校","統廃合","跡地","旅館","温泉","改修",
 ]
 
 GLOBAL_EXCLUDE = [
@@ -215,10 +215,6 @@ def fetch_items(feed_rules: list[dict]):
                 continue
 
             # URL重複を除外
-            if link and link in seen_urls:
-                continue
-            if link:
-                seen_urls.add(link)
 
             # 日付
             pub = None
@@ -228,6 +224,8 @@ def fetch_items(feed_rules: list[dict]):
                     break
             if not pub:
                 pub = to_iso(None)
+
+            print("APPEND:", title, link)
 
             items.append({
                 "title": title,
