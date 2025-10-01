@@ -22,7 +22,8 @@ CONFIG_DIR = ROOT / "config"
 SITE_DIR = ROOT / "site"
 SITE_DIR.mkdir(parents=True, exist_ok=True)
 
-SITE_TITLE = "岩手県 不動産まとめサイト<br>（毎日7:00自動更新）"
+SITE_TITLE_TEXT = "岩手県 不動産まとめサイト（毎日7:00自動更新）"  # ← タブ表示用（改行なし）
+SITE_TITLE_HTML = "岩手県 不動産まとめサイト<br>（毎日7:00自動更新）"  # ← ページ見出し用
 SITE_DESC  = '<a href="https://www.greo-jp.com/" target="_blank">GREO合同会社が運営するまとめサイトです。</a>'
 MAX_ITEMS = 1000
 
@@ -274,14 +275,14 @@ def build_html(items):
     "<!DOCTYPE html>",
     "<html lang=\"ja\">",
     "<meta charset=\"utf-8\">",
-    f"<title>{html.escape(SITE_TITLE)}</title>",
+    f"<title>{html.escape(SITE_TITLE_TEXT)}</title>",   # ← 改行なし
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
     f"<meta name=\"description\" content=\"{html.escape(SITE_DESC)}\">",
     f"<style>{css}</style>",
     "<body>",
     "<header>",
-    f"<h1>{SITE_TITLE}</h1>",
-    f'<div class="desc">{SITE_DESC}</div>',   # ← escape を外した
+    f"<h1>{SITE_TITLE_HTML}</h1>",                      # ← 見出しには改行あり
+    f'<div class="desc">{SITE_DESC}</div>',
     "</header>",
     ]
     for day in sorted(groups.keys(), reverse=True):
