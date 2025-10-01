@@ -103,6 +103,7 @@ def none_hit(text_lc: str, words: list[str]) -> bool:
 # <spec>:
 #   "= 語 語 ..."  → 上書き（グローバル無視）
 #   "+ 語 語 ..."  → 追加（グローバルに足す）
+#   "& 語 語 ..."  → 両方（GLOBAL_INCLUDE と当該語の両方にヒットで採用） ← 追加
 #   "語 語 ..."    → 追加（接頭辞なしは + と同じ）
 #   "ALL" / "*" / "ALL!" → このRSSは全件通す（2列目に書く）。ただし3列目の除外語は有効
 def read_feeds_with_rules(path: Path):
@@ -120,7 +121,7 @@ def read_feeds_with_rules(path: Path):
 
     def parse_spec(spec: str):
         spec = spec.strip()
-        mode = "add"  # add or override
+        mode = "add"  # add / override / both
         if not spec:
             return mode, []
         head = spec[:1]
@@ -128,6 +129,8 @@ def read_feeds_with_rules(path: Path):
             mode = "override"; spec = spec[1:].strip()
         elif head in {"+", "-"}:
             mode = "add"; spec = spec[1:].strip()
+        elif head == "&":  # ← 最小差分: both モードを追加
+            mode = "both"; spec = spec[1:].strip()
         words = [w for w in spec.split() if w]
         return mode, words
 
@@ -162,7 +165,6 @@ def read_feeds_with_rules(path: Path):
 def fetch_items(feed_rules: list[dict]):
     items = []
     total_entries = 0
-    seen_urls = set()
 
     if not feed_rules:
         feed_rules = [{"url": u, "pass_all": False,
@@ -179,7 +181,14 @@ def fetch_items(feed_rules: list[dict]):
             inc = []
             exc = fr["exc_words"] if fr["exc_mode"] == "override" else (GLOBAL_EXCLUDE + fr["exc_words"])
         else:
-            inc = fr["inc_words"] if fr["inc_mode"] == "override" else (GLOBAL_INCLUDE + fr["inc_words"])
+            inc_mode = fr.get("inc_mode", "add")
+            if inc_mode == "override":
+                inc = fr["inc_words"]
+            elif inc_mode == "both":
+                # 両方ヒットは accept 判定で処理するので、ここではフィード固有語のみを保持
+                inc = fr["inc_words"]
+            else:
+                inc = GLOBAL_INCLUDE + fr["inc_words"]
             exc = fr["exc_words"] if fr["exc_mode"] == "override" else (GLOBAL_EXCLUDE + fr["exc_words"])
 
         print(f"[fetch] {url} {'(ALL)' if pass_all else ''}")
@@ -205,16 +214,20 @@ def fetch_items(feed_rules: list[dict]):
             hay = f"{title}\n{body}"
             hay_lc = norm(hay)
 
-            # 受理判定：ALLなら除外語だけチェック／通常は include∧(not exclude)
+            # 受理判定：
+            #  - ALL: 除外語だけチェック
+            #  - both: GLOBAL_INCLUDE と inc(フィード固有語) の両方にヒット かつ 非除外
+            #  - add/override: 従来通り (inc にヒット) かつ 非除外
             if pass_all:
                 accept = none_hit(hay_lc, exc)
             else:
-                accept = any_hit(hay_lc, inc) and none_hit(hay_lc, exc)
+                if fr.get("inc_mode") == "both":
+                    accept = any_hit(hay_lc, GLOBAL_INCLUDE) and any_hit(hay_lc, inc) and none_hit(hay_lc, exc)
+                else:
+                    accept = any_hit(hay_lc, inc) and none_hit(hay_lc, exc)
 
             if not accept:
                 continue
-
-            # URL重複を除外
 
             # 日付
             pub = None

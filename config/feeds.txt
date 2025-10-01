@@ -1,5 +1,5 @@
-https://news.yahoo.co.jp/rss/media/minkei/all.xml | 岩手
-https://news.yahoo.co.jp/rss/media/imptrw/all.xml | 岩手 
+https://news.yahoo.co.jp/rss/media/minkei/all.xml | & 岩手
+https://news.yahoo.co.jp/rss/media/imptrw/all.xml | & 岩手 
 https://news.yahoo.co.jp/rss/media/iat/all.xml
 https://news.yahoo.co.jp/rss/media/ibciwatev/all.xml
 https://news.yahoo.co.jp/rss/media/iwanichi/all.xml
