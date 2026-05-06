@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {}      # 手動実行も可
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -29,12 +29,56 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build site (RSS → HTML)
+      - name: Restore AI judgment cache
+        uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: ai-judged-${{ github.run_id }}
+          restore-keys: |
+            ai-judged-
+
+      - name: Fetch new items (skip already archived)
+        env:
+          IWATE_ROOT: ${{ github.workspace }}
+          MAX_AGE_DAYS: "90"
+        run: python scripts/10_fetch.py
+
+      - name: AI judge (Claude Sonnet 4.6)
+        env:
+          IWATE_ROOT: ${{ github.workspace }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/20_judge.py
+
+      - name: AI dedup
+        env:
+          IWATE_ROOT: ${{ github.workspace }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/30_dedup.py
+
+      - name: Build HTML
         env:
           IWATE_ROOT: ${{ github.workspace }}
         run: |
-          python scripts/04_build_html_simple.py
+          python scripts/40_build_html.py
           test -f site/index.html
+
+      - name: Commit archive
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/archive.jsonl
+          if git diff --cached --quiet; then
+            echo "No archive change"
+          else
+            git commit -m "chore(archive): daily update [skip ci]"
+            git push
+          fi
+
+      - name: Save AI judgment cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache
+          key: ai-judged-${{ github.run_id }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

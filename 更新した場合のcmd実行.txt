@@ -1,0 +1,25 @@
+### 通常の更新 push (ローカルから手動)
+cd C:\iwate_news
+git add config/ scripts/ .github/workflows/ requirements.txt .gitignore
+git commit -m "update: pipeline / config"
+git push origin main
+
+### ローカルでパイプラインを試運転 (PowerShell)
+cd C:\iwate_news
+$env:IWATE_ROOT = "C:\iwate_news"
+$env:ANTHROPIC_API_KEY = "sk-ant-..."   # 自分のAPIキー
+.\.venv\Scripts\python.exe scripts\10_fetch.py
+.\.venv\Scripts\python.exe scripts\20_judge.py
+.\.venv\Scripts\python.exe scripts\30_dedup.py
+.\.venv\Scripts\python.exe scripts\40_build_html.py
+start site\index.html
+
+### GitHub Actions 必須Secret
+Settings → Secrets and variables → Actions → New repository secret
+  Name:  ANTHROPIC_API_KEY
+  Value: sk-ant-...
+
+### キャッシュ確認・初期化
+# AI判定結果は data/cache/judged_cache.json に蓄積される
+# 判定基準を大きく変えた場合は削除して再判定:
+del data\cache\judged_cache.json

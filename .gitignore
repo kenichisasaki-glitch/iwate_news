@@ -1,0 +1,21 @@
+# venv / env
+.venv/
+__pycache__/
+*.pyc
+
+# transient pipeline data
+data/raw_items.jsonl
+data/judged.jsonl
+data/final.jsonl
+
+# AI judgment cache (kept in actions/cache, not committed)
+data/cache/
+
+# secrets
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 重要: data/archive.jsonl は永続化のためコミット対象に含める
