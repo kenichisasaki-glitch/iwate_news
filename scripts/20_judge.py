@@ -6,12 +6,14 @@
 #                                    新規分は今回ぶんだけ追記。dedup後にソート。
 
 import os
+import sys
 import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import anthropic
+import httpx
 
 ROOT = Path(os.getenv("IWATE_ROOT", ".")).resolve()
 CONFIG_DIR = ROOT / "config"
@@ -20,8 +22,14 @@ CACHE_DIR = DATA_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL = "claude-sonnet-4-6"
-MAX_RETRIES = 3
+MAX_RETRIES = 2
 RETRY_BASE_DELAY = 2.0
+API_TIMEOUT = 60.0
+MAX_ITEMS = int(os.getenv("MAX_ITEMS", "0"))  # 0 = no limit
+
+
+def log(msg: str):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 def load_criteria() -> str:
@@ -70,14 +78,14 @@ JUDGE_SCHEMA = {
     "properties": {
         "relevant": {"type": "boolean"},
         "category": {
-            "type": ["string", "null"],
+            "type": "string",
             "enum": [
                 "店舗・商業施設", "工場・物流", "住宅・マンション",
                 "地価・統計", "都市計画・再開発", "用地・公売",
-                "跡地・転用", "観光・宿泊", "その他", None
+                "跡地・転用", "観光・宿泊", "その他", "該当なし"
             ],
         },
-        "municipality": {"type": ["string", "null"]},
+        "municipality": {"type": "string"},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "reason": {"type": "string"},
     },
@@ -98,6 +106,7 @@ def judge_item(client: anthropic.Anthropic, criteria: str, item: dict) -> dict:
     last_err = None
     for attempt in range(MAX_RETRIES):
         try:
+            t0 = time.time()
             resp = client.messages.create(
                 model=MODEL,
                 max_tokens=512,
@@ -110,24 +119,32 @@ def judge_item(client: anthropic.Anthropic, criteria: str, item: dict) -> dict:
                 output_config={
                     "format": {"type": "json_schema", "schema": JUDGE_SCHEMA}
                 },
+                timeout=API_TIMEOUT,
             )
+            elapsed = time.time() - t0
             text = next((b.text for b in resp.content if b.type == "text"), "")
-            return json.loads(text)
-        except (anthropic.RateLimitError, anthropic.APIStatusError) as e:
+            result = json.loads(text)
+            result["_api_sec"] = round(elapsed, 2)
+            return result
+        except anthropic.BadRequestError as e:
+            log(f"  [fatal] schema/request error (no retry): {e}")
+            raise
+        except (anthropic.RateLimitError, anthropic.APIStatusError, httpx.TimeoutException, httpx.HTTPError) as e:
             last_err = e
             delay = RETRY_BASE_DELAY * (2 ** attempt)
-            print(f"  [retry {attempt+1}/{MAX_RETRIES}] {e} → wait {delay:.1f}s")
+            log(f"  [retry {attempt+1}/{MAX_RETRIES}] {type(e).__name__}: {e} → wait {delay:.1f}s")
             time.sleep(delay)
         except Exception as e:
             last_err = e
+            log(f"  [unexpected] {type(e).__name__}: {e}")
             break
 
     return {
         "relevant": True,
         "category": "その他",
-        "municipality": None,
+        "municipality": "不明",
         "confidence": "low",
-        "reason": f"AI判定失敗、保守的に通す: {last_err}",
+        "reason": f"AI判定失敗、保守的に通す: {type(last_err).__name__}",
     }
 
 
@@ -136,43 +153,67 @@ def main():
     if not api_key:
         raise SystemExit("ANTHROPIC_API_KEY not set")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=API_TIMEOUT, max_retries=0)
     criteria = load_criteria()
     cache = load_cache()
     items = load_raw_items()
     now_iso = datetime.now(timezone.utc).isoformat()
 
     if not items:
-        print("[done] no new items to judge")
+        log("[done] no new items to judge")
         return
 
-    print(f"[start] {len(items)} new items to judge, cache size: {len(cache)}")
+    if MAX_ITEMS > 0:
+        items = items[:MAX_ITEMS]
+        log(f"[start] {len(items)} items (capped by MAX_ITEMS={MAX_ITEMS}), cache size: {len(cache)}")
+    else:
+        log(f"[start] {len(items)} new items to judge, cache size: {len(cache)}")
+
+    log(f"[config] model={MODEL} timeout={API_TIMEOUT}s retries={MAX_RETRIES} criteria_chars={len(criteria)}")
 
     n_new_judged = 0
     n_relevant_new = 0
+    n_consec_failures = 0
     new_relevant_items = []
+    t_start = time.time()
 
     for i, item in enumerate(items, 1):
         url = item["url"]
         if url in cache:
             judgment = cache[url]
         else:
+            log(f"  [{i}/{len(items)}] judging: {item['title'][:60]}")
             judgment = judge_item(client, criteria, item)
             cache[url] = judgment
             n_new_judged += 1
+            api_sec = judgment.get("_api_sec", "?")
+            rel = "T" if judgment.get("relevant") else "F"
+            cat = judgment.get("category", "?")
+            log(f"      → relevant={rel} category={cat} ({api_sec}s)")
+
+            if "AI判定失敗" in judgment.get("reason", ""):
+                n_consec_failures += 1
+                if n_consec_failures >= 5:
+                    save_cache(cache)
+                    raise SystemExit(f"5 consecutive failures, aborting. Last: {judgment.get('reason')}")
+            else:
+                n_consec_failures = 0
+
             if n_new_judged % 25 == 0:
                 save_cache(cache)
-                print(f"  [progress] {i}/{len(items)} judged: {n_new_judged}")
+                avg = (time.time() - t_start) / n_new_judged
+                eta_min = avg * (len(items) - i) / 60
+                log(f"  [progress] {i}/{len(items)} judged={n_new_judged} relevant={n_relevant_new} avg={avg:.1f}s/item ETA={eta_min:.1f}min")
 
         if judgment.get("relevant"):
             n_relevant_new += 1
-            merged = {**item, "judgment": judgment, "_added_at": now_iso}
+            merged = {**item, "judgment": {k: v for k, v in judgment.items() if k != "_api_sec"}, "_added_at": now_iso}
             new_relevant_items.append(merged)
 
     save_cache(cache)
     append_to_archive(new_relevant_items)
 
-    print(f"[done] new_judged={n_new_judged} relevant={n_relevant_new} → archive +{len(new_relevant_items)}")
+    log(f"[done] new_judged={n_new_judged} relevant={n_relevant_new} → archive +{len(new_relevant_items)}")
 
 
 if __name__ == "__main__":

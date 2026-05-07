@@ -148,6 +148,7 @@ def dedup_cluster(client: anthropic.Anthropic, cluster_items: list[dict]) -> tup
             system=DEDUP_SYSTEM,
             messages=[{"role": "user", "content": user_text}],
             output_config={"format": {"type": "json_schema", "schema": DEDUP_SCHEMA}},
+            timeout=60.0,
         )
         text = next((b.text for b in resp.content if b.type == "text"), "")
         result = json.loads(text)
@@ -178,7 +179,7 @@ def main():
     if not api_key:
         raise SystemExit("ANTHROPIC_API_KEY not set")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=60.0, max_retries=1)
     archive = load_archive()
     if not archive:
         print("[done] archive empty")
