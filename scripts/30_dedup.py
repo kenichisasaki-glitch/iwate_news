@@ -16,12 +16,14 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import anthropic
+from google import genai
+from google.genai import types as gtypes
+from google.genai import errors as gerrors
 
 ROOT = Path(os.getenv("IWATE_ROOT", ".")).resolve()
 DATA_DIR = ROOT / "data"
 
-MODEL = "claude-sonnet-4-6"
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro")
 SIMILARITY_THRESHOLD = 0.45
 DATE_WINDOW_DAYS = 1
 RECENT_ARCHIVE_DAYS = 14
@@ -30,7 +32,7 @@ MAX_CLUSTER_SIZE = 8
 
 def normalize_title(s: str) -> str:
     s = unicodedata.normalize("NFKC", s or "").lower()
-    s = re.sub(r"[\[\]【】「」『』（）()｜\|・,，、。\.\s\-_/]+", " ", s)
+    s = re.sub(r"[\[\]【】「」『』(()｜\|・,，、。\.\s\-_/]+", " ", s)
     return s.strip()
 
 
@@ -90,12 +92,11 @@ DEDUP_SCHEMA = {
                     "reason": {"type": "string"},
                 },
                 "required": ["indices", "canonical_index", "is_duplicate", "reason"],
-                "additionalProperties": False,
+                "propertyOrdering": ["indices", "canonical_index", "is_duplicate", "reason"],
             },
         },
     },
     "required": ["groups"],
-    "additionalProperties": False,
 }
 
 
@@ -121,7 +122,7 @@ DEDUP_SYSTEM = """あなたは岩手県不動産ニュース集の編集者で�
 """
 
 
-def dedup_cluster(client: anthropic.Anthropic, cluster_items: list[dict]) -> tuple[set[str], list[str]]:
+def dedup_cluster(client: genai.Client, cluster_items: list[dict]) -> tuple[set[str], list[str]]:
     """
     cluster_itemsをAI判定。
     戻り値: (drop_urls: 削除すべきURLの集合, info: 表示用ログ)
@@ -141,19 +142,24 @@ def dedup_cluster(client: anthropic.Anthropic, cluster_items: list[dict]) -> tup
         )
     user_text = "以下の記事群について重複判定してください。\n\n" + "\n\n".join(lines)
 
+    config = gtypes.GenerateContentConfig(
+        system_instruction=DEDUP_SYSTEM,
+        response_mime_type="application/json",
+        response_schema=DEDUP_SCHEMA,
+        temperature=0,
+        max_output_tokens=1024,
+    )
+
     try:
-        resp = client.messages.create(
+        resp = client.models.generate_content(
             model=MODEL,
-            max_tokens=1024,
-            system=DEDUP_SYSTEM,
-            messages=[{"role": "user", "content": user_text}],
-            output_config={"format": {"type": "json_schema", "schema": DEDUP_SCHEMA}},
-            timeout=60.0,
+            contents=user_text,
+            config=config,
         )
-        text = next((b.text for b in resp.content if b.type == "text"), "")
+        text = resp.text or ""
         result = json.loads(text)
     except Exception as e:
-        print(f"  [warn] dedup failed: {e} → keep all in cluster")
+        print(f"  [warn] dedup failed: {type(e).__name__}: {e} → keep all in cluster", flush=True)
         return set(), [f"AI失敗で全保持({len(cluster_items)}件)"]
 
     drop_urls = set()
@@ -175,17 +181,17 @@ def dedup_cluster(client: anthropic.Anthropic, cluster_items: list[dict]) -> tup
 
 
 def main():
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        raise SystemExit("ANTHROPIC_API_KEY not set")
+        raise SystemExit("GEMINI_API_KEY (or GOOGLE_API_KEY) not set")
 
-    client = anthropic.Anthropic(api_key=api_key, timeout=60.0, max_retries=1)
+    client = genai.Client(api_key=api_key)
     archive = load_archive()
     if not archive:
-        print("[done] archive empty")
+        print("[done] archive empty", flush=True)
         return
 
-    print(f"[start] archive size: {len(archive)}")
+    print(f"[start] archive size: {len(archive)}", flush=True)
 
     now_utc = datetime.now(timezone.utc)
     today_str = now_utc.date().isoformat()
@@ -202,13 +208,13 @@ def main():
             candidate_indices.append(i)
 
     if not new_indices:
-        print("[done] no items added today, skip dedup")
+        print("[done] no items added today, skip dedup", flush=True)
         return
 
     new_set = set(new_indices)
     cand_set = set(candidate_indices) | new_set
     cand_list = sorted(cand_set)
-    print(f"  new_today={len(new_indices)}, candidate_pool(recent {RECENT_ARCHIVE_DAYS}d)={len(cand_list)}")
+    print(f"  new_today={len(new_indices)}, candidate_pool(recent {RECENT_ARCHIVE_DAYS}d)={len(cand_list)}", flush=True)
 
     bigrams = {i: title_bigrams(archive[i]["title"]) for i in cand_list}
     dates = {i: parse_date(archive[i].get("published", "")) for i in cand_list}
@@ -229,7 +235,7 @@ def main():
     for i_pos, i in enumerate(cand_list):
         for j in cand_list[i_pos + 1:]:
             if i not in new_set and j not in new_set:
-                continue  # 新規が絡まないクラスタはスキップ
+                continue
             if abs((dates[i] - dates[j]).days) > DATE_WINDOW_DAYS:
                 continue
             if jaccard(bigrams[i], bigrams[j]) >= SIMILARITY_THRESHOLD:
@@ -240,25 +246,25 @@ def main():
         clusters.setdefault(find(i), []).append(i)
     cluster_lists = [c for c in clusters.values() if len(c) >= 2 and any(i in new_set for i in c)]
 
-    print(f"  [clusters] {len(cluster_lists)} clusters with new items")
+    print(f"  [clusters] {len(cluster_lists)} clusters with new items", flush=True)
 
     all_drop_urls: set[str] = set()
     for c_no, cluster in enumerate(cluster_lists, 1):
         cluster_items = [archive[i] for i in cluster]
         drop_urls, info = dedup_cluster(client, cluster_items)
         all_drop_urls |= drop_urls
-        print(f"  [cluster {c_no}/{len(cluster_lists)}] size={len(cluster)} drop={len(drop_urls)}")
+        print(f"  [cluster {c_no}/{len(cluster_lists)}] size={len(cluster)} drop={len(drop_urls)}", flush=True)
         for line in info:
-            print(f"      {line}")
+            print(f"      {line}", flush=True)
         time.sleep(0.3)
 
     if all_drop_urls:
         kept = [it for it in archive if it["url"] not in all_drop_urls]
         save_archive(kept)
-        print(f"[done] dropped {len(all_drop_urls)} duplicates, archive: {len(archive)} → {len(kept)}")
+        print(f"[done] dropped {len(all_drop_urls)} duplicates, archive: {len(archive)} → {len(kept)}", flush=True)
     else:
         save_archive(archive)
-        print(f"[done] no duplicates dropped, archive size: {len(archive)} (sorted)")
+        print(f"[done] no duplicates dropped, archive size: {len(archive)} (sorted)", flush=True)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 feedparser
-anthropic>=0.40.0
+google-genai>=1.0.0
 PyYAML
 requests
 beautifulsoup4

@@ -1,9 +1,8 @@
-# 20_judge.py — Claude Sonnet 4.6で関連性判定（アーカイブ追記型）
+# 20_judge.py — Gemini 3.1 Proで関連性判定（アーカイブ追記型）
 # 入力: data/raw_items.jsonl  (10_fetchで既に新規分のみ)
 # 出力:
 #   data/cache/judged_cache.json  ← 全URL→判定結果（perfキャッシュ）
 #   data/archive.jsonl            ← 関連=trueの記事のみ（永続アーカイブ・コミット対象）
-#                                    新規分は今回ぶんだけ追記。dedup後にソート。
 
 import os
 import sys
@@ -12,8 +11,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import anthropic
-import httpx
+from google import genai
+from google.genai import types as gtypes
+from google.genai import errors as gerrors
 
 ROOT = Path(os.getenv("IWATE_ROOT", ".")).resolve()
 CONFIG_DIR = ROOT / "config"
@@ -21,7 +21,7 @@ DATA_DIR = ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL = "claude-sonnet-4-6"
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro")
 MAX_RETRIES = 2
 RETRY_BASE_DELAY = 2.0
 API_TIMEOUT = 60.0
@@ -90,11 +90,11 @@ JUDGE_SCHEMA = {
         "reason": {"type": "string"},
     },
     "required": ["relevant", "category", "municipality", "confidence", "reason"],
-    "additionalProperties": False,
+    "propertyOrdering": ["relevant", "category", "municipality", "confidence", "reason"],
 }
 
 
-def judge_item(client: anthropic.Anthropic, criteria: str, item: dict) -> dict:
+def judge_item(client: genai.Client, criteria: str, item: dict) -> dict:
     user_text = (
         f"以下の記事を判定基準に従って判定してください。\n\n"
         f"【タイトル】{item['title']}\n"
@@ -103,33 +103,33 @@ def judge_item(client: anthropic.Anthropic, criteria: str, item: dict) -> dict:
         f"【本文】{item['body'][:1500]}"
     )
 
+    config = gtypes.GenerateContentConfig(
+        system_instruction=criteria,
+        response_mime_type="application/json",
+        response_schema=JUDGE_SCHEMA,
+        temperature=0,
+        max_output_tokens=512,
+    )
+
     last_err = None
     for attempt in range(MAX_RETRIES):
         try:
             t0 = time.time()
-            resp = client.messages.create(
+            resp = client.models.generate_content(
                 model=MODEL,
-                max_tokens=512,
-                system=[{
-                    "type": "text",
-                    "text": criteria,
-                    "cache_control": {"type": "ephemeral"},
-                }],
-                messages=[{"role": "user", "content": user_text}],
-                output_config={
-                    "format": {"type": "json_schema", "schema": JUDGE_SCHEMA}
-                },
-                timeout=API_TIMEOUT,
+                contents=user_text,
+                config=config,
             )
             elapsed = time.time() - t0
-            text = next((b.text for b in resp.content if b.type == "text"), "")
+            text = resp.text or ""
             result = json.loads(text)
             result["_api_sec"] = round(elapsed, 2)
             return result
-        except anthropic.BadRequestError as e:
-            log(f"  [fatal] schema/request error (no retry): {e}")
+        except gerrors.ClientError as e:
+            # 4xx — schema/auth等。リトライしても直らない
+            log(f"  [fatal] ClientError (no retry): {e}")
             raise
-        except (anthropic.RateLimitError, anthropic.APIStatusError, httpx.TimeoutException, httpx.HTTPError) as e:
+        except (gerrors.ServerError, gerrors.APIError) as e:
             last_err = e
             delay = RETRY_BASE_DELAY * (2 ** attempt)
             log(f"  [retry {attempt+1}/{MAX_RETRIES}] {type(e).__name__}: {e} → wait {delay:.1f}s")
@@ -149,11 +149,11 @@ def judge_item(client: anthropic.Anthropic, criteria: str, item: dict) -> dict:
 
 
 def main():
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        raise SystemExit("ANTHROPIC_API_KEY not set")
+        raise SystemExit("GEMINI_API_KEY (or GOOGLE_API_KEY) not set")
 
-    client = anthropic.Anthropic(api_key=api_key, timeout=API_TIMEOUT, max_retries=0)
+    client = genai.Client(api_key=api_key)
     criteria = load_criteria()
     cache = load_cache()
     items = load_raw_items()
@@ -169,7 +169,7 @@ def main():
     else:
         log(f"[start] {len(items)} new items to judge, cache size: {len(cache)}")
 
-    log(f"[config] model={MODEL} timeout={API_TIMEOUT}s retries={MAX_RETRIES} criteria_chars={len(criteria)}")
+    log(f"[config] model={MODEL} retries={MAX_RETRIES} criteria_chars={len(criteria)}")
 
     n_new_judged = 0
     n_relevant_new = 0
