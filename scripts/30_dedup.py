@@ -147,7 +147,7 @@ def dedup_cluster(client: genai.Client, cluster_items: list[dict]) -> tuple[set[
         response_mime_type="application/json",
         response_schema=DEDUP_SCHEMA,
         temperature=0,
-        max_output_tokens=1024,
+        max_output_tokens=4096,
     )
 
     try:
@@ -156,8 +156,15 @@ def dedup_cluster(client: genai.Client, cluster_items: list[dict]) -> tuple[set[
             contents=user_text,
             config=config,
         )
-        text = resp.text or ""
-        result = json.loads(text)
+        parsed = getattr(resp, "parsed", None)
+        if isinstance(parsed, dict):
+            result = parsed
+        else:
+            text = (getattr(resp, "text", None) or "").strip()
+            if text.startswith("```"):
+                text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+                text = re.sub(r"\n?```\s*$", "", text)
+            result = json.loads(text)
     except Exception as e:
         print(f"  [warn] dedup failed: {type(e).__name__}: {e} → keep all in cluster", flush=True)
         return set(), [f"AI失敗で全保持({len(cluster_items)}件)"]

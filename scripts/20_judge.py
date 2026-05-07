@@ -5,6 +5,7 @@
 #   data/archive.jsonl            ← 関連=trueの記事のみ（永続アーカイブ・コミット対象）
 
 import os
+import re
 import sys
 import json
 import time
@@ -30,6 +31,29 @@ MAX_ITEMS = int(os.getenv("MAX_ITEMS", "0"))  # 0 = no limit
 
 def log(msg: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def parse_gemini_json(resp) -> dict:
+    """Geminiレスポンスから堅牢にJSON抽出。
+    優先度: resp.parsed > resp.text直接 > markdown fence除去 > 空候補チェック"""
+    parsed = getattr(resp, "parsed", None)
+    if isinstance(parsed, dict):
+        return parsed
+    text = (getattr(resp, "text", None) or "").strip()
+    if not text:
+        # finish_reasonを含むエラー詳細を出す
+        try:
+            cand = resp.candidates[0]
+            fr = getattr(cand, "finish_reason", "?")
+            usage = getattr(resp, "usage_metadata", None)
+            log(f"  [debug] empty text, finish_reason={fr}, usage={usage}")
+        except Exception:
+            pass
+        raise ValueError("empty response text")
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+    return json.loads(text)
 
 
 def load_criteria() -> str:
@@ -108,7 +132,7 @@ def judge_item(client: genai.Client, criteria: str, item: dict) -> dict:
         response_mime_type="application/json",
         response_schema=JUDGE_SCHEMA,
         temperature=0,
-        max_output_tokens=512,
+        max_output_tokens=4096,
     )
 
     last_err = None
@@ -121,8 +145,7 @@ def judge_item(client: genai.Client, criteria: str, item: dict) -> dict:
                 config=config,
             )
             elapsed = time.time() - t0
-            text = resp.text or ""
-            result = json.loads(text)
+            result = parse_gemini_json(resp)
             result["_api_sec"] = round(elapsed, 2)
             return result
         except gerrors.ClientError as e:
@@ -179,25 +202,27 @@ def main():
 
     for i, item in enumerate(items, 1):
         url = item["url"]
-        if url in cache:
-            judgment = cache[url]
+        cached = cache.get(url)
+        if cached and "AI判定失敗" not in cached.get("reason", ""):
+            judgment = cached
         else:
             log(f"  [{i}/{len(items)}] judging: {item['title'][:60]}")
             judgment = judge_item(client, criteria, item)
-            cache[url] = judgment
             n_new_judged += 1
             api_sec = judgment.get("_api_sec", "?")
             rel = "T" if judgment.get("relevant") else "F"
             cat = judgment.get("category", "?")
             log(f"      → relevant={rel} category={cat} ({api_sec}s)")
 
-            if "AI判定失敗" in judgment.get("reason", ""):
+            is_failure = "AI判定失敗" in judgment.get("reason", "")
+            if not is_failure:
+                cache[url] = judgment  # 成功時のみキャッシュ
+                n_consec_failures = 0
+            else:
                 n_consec_failures += 1
                 if n_consec_failures >= 5:
                     save_cache(cache)
                     raise SystemExit(f"5 consecutive failures, aborting. Last: {judgment.get('reason')}")
-            else:
-                n_consec_failures = 0
 
             if n_new_judged % 25 == 0:
                 save_cache(cache)
