@@ -75,7 +75,6 @@ def build_html(items: list[dict]) -> str:
     header{margin-bottom:16px}
     h1{font-size:1.45rem;margin:0}
     .desc{color:#555;margin:4px 0 8px}
-    .stats{color:#666;font-size:.85rem;margin-bottom:16px}
     .date{margin-top:22px;font-weight:700;border-bottom:1px solid #ddd;padding-bottom:4px}
     .item{border:1px solid #eee;border-radius:12px;padding:10px 12px;margin:10px 0}
     .item h3{margin:0 0 6px;font-size:1.02rem;line-height:1.4}
@@ -103,16 +102,6 @@ def build_html(items: list[dict]) -> str:
         day = iso_to_ymd_jst(it["published"]) or "日付不明"
         groups[day].append(it)
 
-    cat_counts = defaultdict(int)
-    for it in items_sorted:
-        cat = (it.get("judgment") or {}).get("category") or "その他"
-        cat_counts[cat] += 1
-    stats_line = " / ".join(
-        f"{c}: {cat_counts[c]}"
-        for c in CATEGORY_ORDER
-        if cat_counts.get(c)
-    )
-
     parts = [
         "<!DOCTYPE html>",
         '<html lang="ja">',
@@ -125,7 +114,6 @@ def build_html(items: list[dict]) -> str:
         "<header>",
         f"<h1>{SITE_TITLE}<br>{SITE_SUBTITLE}</h1>",
         f'<div class="desc">{SITE_DESC}</div>',
-        f'<div class="stats">表示 {len(items_sorted)} 件 ／ {stats_line}</div>',
         "</header>",
     ]
 
