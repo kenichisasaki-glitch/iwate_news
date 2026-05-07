@@ -23,7 +23,7 @@ from google.genai import errors as gerrors
 ROOT = Path(os.getenv("IWATE_ROOT", ".")).resolve()
 DATA_DIR = ROOT / "data"
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
 SIMILARITY_THRESHOLD = 0.45
 DATE_WINDOW_DAYS = 1
 RECENT_ARCHIVE_DAYS = 14

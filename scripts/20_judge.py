@@ -21,7 +21,7 @@ DATA_DIR = ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
 MAX_RETRIES = 2
 RETRY_BASE_DELAY = 2.0
 API_TIMEOUT = 60.0
