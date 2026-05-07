@@ -64,13 +64,15 @@ jobs:
           python -u scripts/40_build_html.py
           test -f site/index.html
 
-      - name: Commit archive
+      - name: Commit archive + keepalive marker
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/archive.jsonl
+          # 毎日必ず更新するファイルでcron自動停止(60日無活動)を防ぐ
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > data/last_run.txt
+          git add data/archive.jsonl data/last_run.txt
           if git diff --cached --quiet; then
-            echo "No archive change"
+            echo "No changes (unexpected)"
           else
             git commit -m "chore(archive): daily update [skip ci]"
             git push
