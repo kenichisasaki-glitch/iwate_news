@@ -59,11 +59,11 @@ sources:
   - { name: "Google: 盛岡 出店 OR 撤退", url: "https://news.google.com/rss/search?q=%E7%9B%9B%E5%B2%A1+%28%E5%87%BA%E5%BA%97+OR+%E6%92%A4%E9%80%80%29&hl=ja&gl=JP&ceid=JP:ja", type: rss }
   - { name: "Google: 北上 キオクシア OR 半導体", url: "https://news.google.com/rss/search?q=%E5%8C%97%E4%B8%8A+%28%E3%82%AD%E3%82%AA%E3%82%AF%E3%82%B7%E3%82%A2+OR+%E5%8D%8A%E5%B0%8E%E4%BD%93%29&hl=ja&gl=JP&ceid=JP:ja", type: rss }
 
-  # ---- RSS未提供4自治体の補完 (Google News市町村名検索) ----
-  - { name: "Google: 陸前高田市", url: "https://news.google.com/rss/search?q=%E9%99%B8%E5%89%8D%E9%AB%98%E7%94%B0%E5%B8%82&hl=ja&gl=JP&ceid=JP:ja", type: rss }
-  - { name: "Google: 紫波町", url: "https://news.google.com/rss/search?q=%E7%B4%AB%E6%B3%A2%E7%94%BA&hl=ja&gl=JP&ceid=JP:ja", type: rss }
-  - { name: "Google: 軽米町", url: "https://news.google.com/rss/search?q=%E8%BB%BD%E7%B1%B3%E7%94%BA&hl=ja&gl=JP&ceid=JP:ja", type: rss }
-  - { name: "Google: 野田村 岩手", url: "https://news.google.com/rss/search?q=%E9%87%8E%E7%94%B0%E6%9D%91+%E5%B2%A9%E6%89%8B&hl=ja&gl=JP&ceid=JP:ja", type: rss }
+  # ---- RSS未提供4自治体の公式サイトスクレイプ ----
+  - { name: "陸前高田市", url: "https://www.city.rikuzentakata.iwate.jp/index.update.json", type: nsls_json }
+  - { name: "野田村", url: "https://www.vill.noda.iwate.jp/index.update.json", type: nsls_json }
+  - { name: "紫波町", url: "https://www.town.shiwa.iwate.jp/news/", type: html_scrape, mode: shiwa }
+  - { name: "軽米町", url: "https://www.town.karumai.iwate.jp/topics/", type: html_scrape, mode: karumai }
 
   # ---- PR TIMES (岩手検索) ----
   - { name: "PR TIMES: 岩手", url: "https://prtimes.jp/topics/keywords/%E5%B2%A9%E6%89%8B.atom", type: rss }
