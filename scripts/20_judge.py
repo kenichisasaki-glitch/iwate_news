@@ -23,9 +23,10 @@ CACHE_DIR = DATA_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
-MAX_RETRIES = 2
-RETRY_BASE_DELAY = 2.0
+MAX_RETRIES = 4
+RETRY_BASE_DELAY = 5.0
 API_TIMEOUT = 60.0
+INTER_REQUEST_DELAY = float(os.getenv("INTER_REQUEST_DELAY", "0.3"))
 MAX_ITEMS = int(os.getenv("MAX_ITEMS", "0"))  # 0 = no limit
 
 
@@ -149,8 +150,14 @@ def judge_item(client: genai.Client, criteria: str, item: dict) -> dict:
             result["_api_sec"] = round(elapsed, 2)
             return result
         except gerrors.ClientError as e:
-            # 4xx — schema/auth等。リトライしても直らない
-            log(f"  [fatal] ClientError (no retry): {e}")
+            code = getattr(e, "code", None)
+            if code == 429:
+                last_err = e
+                delay = RETRY_BASE_DELAY * (2 ** attempt) * 2
+                log(f"  [retry {attempt+1}/{MAX_RETRIES}] 429 RATE_LIMIT → wait {delay:.1f}s")
+                time.sleep(delay)
+                continue
+            log(f"  [fatal] ClientError code={code} (no retry): {e}")
             raise
         except (gerrors.ServerError, gerrors.APIError) as e:
             last_err = e
@@ -220,9 +227,12 @@ def main():
                 n_consec_failures = 0
             else:
                 n_consec_failures += 1
-                if n_consec_failures >= 5:
+                if n_consec_failures >= 20:
                     save_cache(cache)
-                    raise SystemExit(f"5 consecutive failures, aborting. Last: {judgment.get('reason')}")
+                    raise SystemExit(f"20 consecutive failures, aborting. Last: {judgment.get('reason')}")
+
+            if INTER_REQUEST_DELAY > 0:
+                time.sleep(INTER_REQUEST_DELAY)
 
             if n_new_judged % 25 == 0:
                 save_cache(cache)
