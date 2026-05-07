@@ -1,4 +1,4 @@
-# 20_judge.py — Gemini 3.1 Proで関連性判定（アーカイブ追記型）
+# 20_judge.py — Claude Sonnet 4.6で関連性判定（アーカイブ追記型）
 # 入力: data/raw_items.jsonl  (10_fetchで既に新規分のみ)
 # 出力:
 #   data/cache/judged_cache.json  ← 全URL→判定結果（perfキャッシュ）
@@ -12,9 +12,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from google import genai
-from google.genai import types as gtypes
-from google.genai import errors as gerrors
+import anthropic
+import httpx
 
 ROOT = Path(os.getenv("IWATE_ROOT", ".")).resolve()
 CONFIG_DIR = ROOT / "config"
@@ -22,39 +21,15 @@ DATA_DIR = ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
-MAX_RETRIES = 4
-RETRY_BASE_DELAY = 5.0
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 2.0
 API_TIMEOUT = 60.0
-INTER_REQUEST_DELAY = float(os.getenv("INTER_REQUEST_DELAY", "0.3"))
 MAX_ITEMS = int(os.getenv("MAX_ITEMS", "0"))  # 0 = no limit
 
 
 def log(msg: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-
-
-def parse_gemini_json(resp) -> dict:
-    """Geminiレスポンスから堅牢にJSON抽出。
-    優先度: resp.parsed > resp.text直接 > markdown fence除去 > 空候補チェック"""
-    parsed = getattr(resp, "parsed", None)
-    if isinstance(parsed, dict):
-        return parsed
-    text = (getattr(resp, "text", None) or "").strip()
-    if not text:
-        # finish_reasonを含むエラー詳細を出す
-        try:
-            cand = resp.candidates[0]
-            fr = getattr(cand, "finish_reason", "?")
-            usage = getattr(resp, "usage_metadata", None)
-            log(f"  [debug] empty text, finish_reason={fr}, usage={usage}")
-        except Exception:
-            pass
-        raise ValueError("empty response text")
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
-        text = re.sub(r"\n?```\s*$", "", text)
-    return json.loads(text)
 
 
 def load_criteria() -> str:
@@ -115,11 +90,11 @@ JUDGE_SCHEMA = {
         "reason": {"type": "string"},
     },
     "required": ["relevant", "category", "municipality", "confidence", "reason"],
-    "propertyOrdering": ["relevant", "category", "municipality", "confidence", "reason"],
+    "additionalProperties": False,
 }
 
 
-def judge_item(client: genai.Client, criteria: str, item: dict) -> dict:
+def judge_item(client: anthropic.Anthropic, criteria: str, item: dict) -> dict:
     user_text = (
         f"以下の記事を判定基準に従って判定してください。\n\n"
         f"【タイトル】{item['title']}\n"
@@ -128,38 +103,33 @@ def judge_item(client: genai.Client, criteria: str, item: dict) -> dict:
         f"【本文】{item['body'][:1500]}"
     )
 
-    config = gtypes.GenerateContentConfig(
-        system_instruction=criteria,
-        response_mime_type="application/json",
-        response_schema=JUDGE_SCHEMA,
-        temperature=0,
-        max_output_tokens=4096,
-    )
-
     last_err = None
     for attempt in range(MAX_RETRIES):
         try:
             t0 = time.time()
-            resp = client.models.generate_content(
+            resp = client.messages.create(
                 model=MODEL,
-                contents=user_text,
-                config=config,
+                max_tokens=512,
+                system=[{
+                    "type": "text",
+                    "text": criteria,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                messages=[{"role": "user", "content": user_text}],
+                output_config={
+                    "format": {"type": "json_schema", "schema": JUDGE_SCHEMA}
+                },
+                timeout=API_TIMEOUT,
             )
             elapsed = time.time() - t0
-            result = parse_gemini_json(resp)
+            text = next((b.text for b in resp.content if b.type == "text"), "")
+            result = json.loads(text)
             result["_api_sec"] = round(elapsed, 2)
             return result
-        except gerrors.ClientError as e:
-            code = getattr(e, "code", None)
-            if code == 429:
-                last_err = e
-                delay = RETRY_BASE_DELAY * (2 ** attempt) * 2
-                log(f"  [retry {attempt+1}/{MAX_RETRIES}] 429 RATE_LIMIT → wait {delay:.1f}s")
-                time.sleep(delay)
-                continue
-            log(f"  [fatal] ClientError code={code} (no retry): {e}")
+        except anthropic.BadRequestError as e:
+            log(f"  [fatal] schema/request error (no retry): {e}")
             raise
-        except (gerrors.ServerError, gerrors.APIError) as e:
+        except (anthropic.RateLimitError, anthropic.APIStatusError, httpx.TimeoutException, httpx.HTTPError) as e:
             last_err = e
             delay = RETRY_BASE_DELAY * (2 ** attempt)
             log(f"  [retry {attempt+1}/{MAX_RETRIES}] {type(e).__name__}: {e} → wait {delay:.1f}s")
@@ -179,11 +149,11 @@ def judge_item(client: genai.Client, criteria: str, item: dict) -> dict:
 
 
 def main():
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise SystemExit("GEMINI_API_KEY (or GOOGLE_API_KEY) not set")
+        raise SystemExit("ANTHROPIC_API_KEY not set")
 
-    client = genai.Client(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=API_TIMEOUT, max_retries=0)
     criteria = load_criteria()
     cache = load_cache()
     items = load_raw_items()
@@ -199,7 +169,7 @@ def main():
     else:
         log(f"[start] {len(items)} new items to judge, cache size: {len(cache)}")
 
-    log(f"[config] model={MODEL} retries={MAX_RETRIES} criteria_chars={len(criteria)}")
+    log(f"[config] model={MODEL} timeout={API_TIMEOUT}s retries={MAX_RETRIES} criteria_chars={len(criteria)}")
 
     n_new_judged = 0
     n_relevant_new = 0
@@ -223,16 +193,13 @@ def main():
 
             is_failure = "AI判定失敗" in judgment.get("reason", "")
             if not is_failure:
-                cache[url] = judgment  # 成功時のみキャッシュ
+                cache[url] = judgment
                 n_consec_failures = 0
             else:
                 n_consec_failures += 1
-                if n_consec_failures >= 20:
+                if n_consec_failures >= 10:
                     save_cache(cache)
-                    raise SystemExit(f"20 consecutive failures, aborting. Last: {judgment.get('reason')}")
-
-            if INTER_REQUEST_DELAY > 0:
-                time.sleep(INTER_REQUEST_DELAY)
+                    raise SystemExit(f"10 consecutive failures, aborting. Last: {judgment.get('reason')}")
 
             if n_new_judged % 25 == 0:
                 save_cache(cache)

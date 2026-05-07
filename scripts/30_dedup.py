@@ -1,12 +1,6 @@
 # 30_dedup.py — アーカイブ内の重複削除（新規追加分のみ対象に効率化）
 # 入力: data/archive.jsonl  (20_judgeが追記済み)
 # 出力: data/archive.jsonl  (重複削除＋日付降順ソート)
-#
-# 戦略:
-#   1. 今回追加された(_added_at=直近)記事 と
-#      最近14日のアーカイブ記事 の間でクラスタリング
-#   2. クラスタごとにAIで重複判定
-#   3. 重複と確定したものはdrop（保守的＝迷ったら通す）
 
 import os
 import json
@@ -16,14 +10,12 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from google import genai
-from google.genai import types as gtypes
-from google.genai import errors as gerrors
+import anthropic
 
 ROOT = Path(os.getenv("IWATE_ROOT", ".")).resolve()
 DATA_DIR = ROOT / "data"
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 SIMILARITY_THRESHOLD = 0.45
 DATE_WINDOW_DAYS = 1
 RECENT_ARCHIVE_DAYS = 14
@@ -92,11 +84,12 @@ DEDUP_SCHEMA = {
                     "reason": {"type": "string"},
                 },
                 "required": ["indices", "canonical_index", "is_duplicate", "reason"],
-                "propertyOrdering": ["indices", "canonical_index", "is_duplicate", "reason"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["groups"],
+    "additionalProperties": False,
 }
 
 
@@ -122,11 +115,7 @@ DEDUP_SYSTEM = """あなたは岩手県不動産ニュース集の編集者で�
 """
 
 
-def dedup_cluster(client: genai.Client, cluster_items: list[dict]) -> tuple[set[str], list[str]]:
-    """
-    cluster_itemsをAI判定。
-    戻り値: (drop_urls: 削除すべきURLの集合, info: 表示用ログ)
-    """
+def dedup_cluster(client: anthropic.Anthropic, cluster_items: list[dict]) -> tuple[set[str], list[str]]:
     if len(cluster_items) > MAX_CLUSTER_SIZE:
         mid = len(cluster_items) // 2
         d1, l1 = dedup_cluster(client, cluster_items[:mid])
@@ -142,29 +131,17 @@ def dedup_cluster(client: genai.Client, cluster_items: list[dict]) -> tuple[set[
         )
     user_text = "以下の記事群について重複判定してください。\n\n" + "\n\n".join(lines)
 
-    config = gtypes.GenerateContentConfig(
-        system_instruction=DEDUP_SYSTEM,
-        response_mime_type="application/json",
-        response_schema=DEDUP_SCHEMA,
-        temperature=0,
-        max_output_tokens=4096,
-    )
-
     try:
-        resp = client.models.generate_content(
+        resp = client.messages.create(
             model=MODEL,
-            contents=user_text,
-            config=config,
+            max_tokens=1024,
+            system=DEDUP_SYSTEM,
+            messages=[{"role": "user", "content": user_text}],
+            output_config={"format": {"type": "json_schema", "schema": DEDUP_SCHEMA}},
+            timeout=60.0,
         )
-        parsed = getattr(resp, "parsed", None)
-        if isinstance(parsed, dict):
-            result = parsed
-        else:
-            text = (getattr(resp, "text", None) or "").strip()
-            if text.startswith("```"):
-                text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
-                text = re.sub(r"\n?```\s*$", "", text)
-            result = json.loads(text)
+        text = next((b.text for b in resp.content if b.type == "text"), "")
+        result = json.loads(text)
     except Exception as e:
         print(f"  [warn] dedup failed: {type(e).__name__}: {e} → keep all in cluster", flush=True)
         return set(), [f"AI失敗で全保持({len(cluster_items)}件)"]
@@ -188,11 +165,11 @@ def dedup_cluster(client: genai.Client, cluster_items: list[dict]) -> tuple[set[
 
 
 def main():
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise SystemExit("GEMINI_API_KEY (or GOOGLE_API_KEY) not set")
+        raise SystemExit("ANTHROPIC_API_KEY not set")
 
-    client = genai.Client(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=60.0, max_retries=1)
     archive = load_archive()
     if not archive:
         print("[done] archive empty", flush=True)
