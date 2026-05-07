@@ -141,7 +141,12 @@ def build_html(items: list[dict]) -> str:
             j = it.get("judgment") or {}
             title = html.escape(it["title"] or "(無題)")
             url = html.escape(it["url"] or "#")
-            src = html.escape(it["source"] or "")
+            raw_src = it.get("source") or ""
+            if raw_src.startswith("Google:"):
+                raw_src = "Google ニュース"
+            elif raw_src.startswith("PR TIMES:"):
+                raw_src = "PR TIMES"
+            src = html.escape(raw_src)
             cat = j.get("category") or "その他"
             muni = j.get("municipality")
             cat_badge = f'<span class="badge cat-{html.escape(cat)}">{html.escape(cat)}</span>' if cat else ""
