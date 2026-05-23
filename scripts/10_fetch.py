@@ -324,6 +324,7 @@ def main():
     all_items = []
     seen_urls = set()
     n_skip_archived = 0
+    n_skip_excluded = 0
     for src in sources:
         items = fetch_one(src, age_cutoff)
         for it in items:
@@ -333,6 +334,11 @@ def main():
                 continue
             if url in seen_urls:
                 continue
+            # 楽待 (rakumachi.jp) は不動産投資物件の売買広告のため除外
+            title_lower = it["title"].lower()
+            if "rakumachi" in title_lower or "楽待" in it["title"]:
+                n_skip_excluded += 1
+                continue
             seen_urls.add(url)
             all_items.append(it)
 
@@ -341,7 +347,7 @@ def main():
         for it in all_items:
             f.write(json.dumps(it, ensure_ascii=False) + "\n")
 
-    print(f"[done] {len(all_items)} new items (skipped {n_skip_archived} already archived) → {out}")
+    print(f"[done] {len(all_items)} new items (skipped {n_skip_archived} already archived, {n_skip_excluded} excluded) → {out}")
 
 
 if __name__ == "__main__":
