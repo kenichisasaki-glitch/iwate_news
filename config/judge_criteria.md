@@ -96,7 +96,7 @@
 - 全県横断的なニュース（地価発表、統計、観光統計等）は `municipality="岩手県全域"`
 
 ### 3-4. カテゴリ分類
-以下から1つ選ぶ：
+relevant=trueなら以下から1つ選ぶ：
 - `店舗・商業施設`
 - `工場・物流`
 - `住宅・マンション`
@@ -106,6 +106,13 @@
 - `跡地・転用`
 - `観光・宿泊`
 - `その他`
+
+relevant=falseの場合: `該当なし` を選ぶ（必ず文字列を返すこと）
+
+### 3-4b. 市町村（municipality）
+relevant=trueの場合: 33市町村のいずれか、または `岩手県全域`（県横断ニュース）
+relevant=falseの場合: `該当なし`
+不明なら `不明`（必ず文字列を返すこと）
 
 ### 3-5. 信頼度
 - `high`: 明確に基準に合致
@@ -129,8 +136,8 @@
 ```json
 {
   "relevant": false,
-  "category": null,
-  "municipality": null,
+  "category": "該当なし",
+  "municipality": "該当なし",
   "confidence": "high",
   "reason": "盛岡市職員採用試験の告知"
 }
