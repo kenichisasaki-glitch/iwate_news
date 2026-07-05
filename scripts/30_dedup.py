@@ -18,8 +18,9 @@ ROOT = Path(os.getenv("IWATE_ROOT", ".")).resolve()
 DATA_DIR = ROOT / "data"
 
 MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
-RECENT_ARCHIVE_DAYS = 14
-MAX_POOL = 150          # 1回のAI呼び出しに渡す記事数の上限
+RECENT_ARCHIVE_DAYS = int(os.getenv("DEDUP_WINDOW_DAYS", "14"))
+MAX_POOL = 120          # 1回のAI呼び出しに渡す記事数の上限
+POOL_OVERLAP = 10       # チャンク間の重なり（境界をまたぐ重複の取りこぼし対策）
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 3.0
 
@@ -91,8 +92,9 @@ DEDUP_SYSTEM = """あなたは岩手県不動産ニュース集の編集者で�
   1. 情報量が多く内容が詳しい記事を最優先（本文が充実、具体的な数字・詳細がある）
   2. 同等なら一次情報・公式に近いソース優先（自治体公式 > 新聞・テレビ > 転載・まとめ）
   3. それも同等なら新しい記事優先
-- 残すのは基本1つ。ただし複数の記事がそれぞれ独自の重要な情報を持つ場合
-  （例: 一方は設備詳細、他方は投資計画に詳しい）は複数残してよい
+- 残すのは基本1つ。複数の記事がそれぞれ独自の重要な情報を持つ場合
+  （例: 一方は設備詳細、他方は投資計画に詳しい）に限り複数残してよいが、
+  同一事象につき最大でも2〜3本まで。切り口が少し違う程度なら1本に集約する
 - 重複かどうか迷う場合は is_duplicate=false にして全部残す（取りこぼし回避を最優先）
 
 出力: groups配列。重複の疑いがある2件以上のグループだけを出力してください（単独記事は出力不要）。
@@ -186,9 +188,6 @@ def main():
 
     pool = [it for it in archive if parse_date(it.get("published", "")) >= recent_cutoff]
     pool.sort(key=lambda x: x.get("published", ""), reverse=True)
-    if len(pool) > MAX_POOL:
-        print(f"  [warn] pool {len(pool)} > {MAX_POOL}, truncating to most recent {MAX_POOL}", flush=True)
-        pool = pool[:MAX_POOL]
 
     if len(pool) < 2:
         print("[done] pool too small, nothing to dedup", flush=True)
@@ -196,9 +195,23 @@ def main():
 
     print(f"  [pool] {len(pool)} items (last {RECENT_ARCHIVE_DAYS}d) → AI grouping", flush=True)
 
-    drop_urls, info = ai_group_duplicates(client, pool)
-    for line in info:
-        print(f"      {line}", flush=True)
+    # MAX_POOL件ずつ時系列チャンクで処理（重複は日付近傍に固まるため、
+    # POOL_OVERLAP件の重なりを持たせて境界をまたぐ事象を拾う）
+    drop_urls: set[str] = set()
+    start = 0
+    chunk_no = 0
+    while start < len(pool):
+        chunk = pool[start:start + MAX_POOL]
+        chunk_no += 1
+        if len(pool) > MAX_POOL:
+            print(f"  [chunk {chunk_no}] {len(chunk)} items ({chunk[-1].get('published','')[:10]}〜{chunk[0].get('published','')[:10]})", flush=True)
+        d, info = ai_group_duplicates(client, chunk)
+        drop_urls |= d
+        for line in info:
+            print(f"      {line}", flush=True)
+        if start + MAX_POOL >= len(pool):
+            break
+        start += MAX_POOL - POOL_OVERLAP
 
     if drop_urls:
         kept = [it for it in archive if it["url"] not in drop_urls]
