@@ -43,7 +43,7 @@ jobs:
           MAX_AGE_DAYS: "30"
         run: python -u scripts/10_fetch.py
 
-      - name: AI judge (Claude Sonnet 4.6)
+      - name: AI judge (Claude Sonnet 5)
         env:
           IWATE_ROOT: ${{ github.workspace }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

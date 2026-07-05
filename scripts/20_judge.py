@@ -1,4 +1,4 @@
-# 20_judge.py — Claude Sonnet 4.6で関連性判定（アーカイブ追記型）
+# 20_judge.py — Claude Sonnet 5で関連性判定（アーカイブ追記型）
 # 入力: data/raw_items.jsonl  (10_fetchで既に新規分のみ)
 # 出力:
 #   data/cache/judged_cache.json  ← 全URL→判定結果（perfキャッシュ）
@@ -21,7 +21,7 @@ DATA_DIR = ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2.0
 API_TIMEOUT = 60.0
@@ -110,6 +110,9 @@ def judge_item(client: anthropic.Anthropic, criteria: str, item: dict) -> dict:
             resp = client.messages.create(
                 model=MODEL,
                 max_tokens=512,
+                # Sonnet 5はthinking省略時にadaptive thinkingが有効になり
+                # max_tokens=512を思考で使い切る恐れがあるため明示的に無効化
+                thinking={"type": "disabled"},
                 system=[{
                     "type": "text",
                     "text": criteria,

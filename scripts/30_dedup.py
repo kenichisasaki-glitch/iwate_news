@@ -1,12 +1,14 @@
-# 30_dedup.py — アーカイブ内の重複削除（新規追加分のみ対象に効率化）
+# 30_dedup.py — アーカイブ内の重複削除（AIによる一括グルーピング方式）
 # 入力: data/archive.jsonl  (20_judgeが追記済み)
 # 出力: data/archive.jsonl  (重複削除＋日付降順ソート)
+#
+# 旧方式（タイトルbigram類似度+日付窓の事前フィルタ）は、各社で言い回しが違う
+# 同一事象の記事（例: キオクシア第2製造棟報道）を取りこぼしたため廃止。
+# 直近RECENT_ARCHIVE_DAYS日分の記事をまとめてAIに渡し、重複グループを判定させる。
 
 import os
 import json
-import re
 import time
-import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -15,28 +17,11 @@ import anthropic
 ROOT = Path(os.getenv("IWATE_ROOT", ".")).resolve()
 DATA_DIR = ROOT / "data"
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-SIMILARITY_THRESHOLD = 0.45
-DATE_WINDOW_DAYS = 1
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 RECENT_ARCHIVE_DAYS = 14
-MAX_CLUSTER_SIZE = 8
-
-
-def normalize_title(s: str) -> str:
-    s = unicodedata.normalize("NFKC", s or "").lower()
-    s = re.sub(r"[\[\]【】「」『』(()｜\|・,，、。\.\s\-_/]+", " ", s)
-    return s.strip()
-
-
-def title_bigrams(s: str) -> set[str]:
-    s = normalize_title(s).replace(" ", "")
-    return {s[i:i+2] for i in range(len(s) - 1)} if len(s) >= 2 else set()
-
-
-def jaccard(a: set, b: set) -> float:
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
+MAX_POOL = 150          # 1回のAI呼び出しに渡す記事数の上限
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 3.0
 
 
 def parse_date(iso: str) -> datetime:
@@ -79,11 +64,11 @@ DEDUP_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "indices": {"type": "array", "items": {"type": "integer"}},
-                    "canonical_index": {"type": "integer"},
+                    "keep_indices": {"type": "array", "items": {"type": "integer"}},
                     "is_duplicate": {"type": "boolean"},
                     "reason": {"type": "string"},
                 },
-                "required": ["indices", "canonical_index", "is_duplicate", "reason"],
+                "required": ["indices", "keep_indices", "is_duplicate", "reason"],
                 "additionalProperties": False,
             },
         },
@@ -94,72 +79,84 @@ DEDUP_SCHEMA = {
 
 
 DEDUP_SYSTEM = """あなたは岩手県不動産ニュース集の編集者です。
-入力された記事群から「同じ事象を報じた重複記事」を見つけてグルーピングしてください。
+入力された記事一覧から「同じ事象を報じた重複記事」のグループを見つけてください。
 
 ルール:
-- 同じ事象 = 同じ施設・同じイベント・同じ発表を別ソースが報じている
+- 同じ事象 = 同じ施設・同じイベント・同じ発表を別ソース（または同一ソース）が報じている
+  - タイトルの言い回しが各社で大きく違っても、報じている事象が同じなら重複
+  - 同じ事象の報道が数日にまたがることもある（発表日と続報日など）
 - 別事象 = タイトルが似ていても内容が違う場合（例: 同じ店の別店舗、別の決算発表回）
-- 重複と判断したら、代表(canonical)を1つ選ぶ:
-  1. 一次情報・公式に近いソース優先（自治体公式 > 新聞 > 転載・まとめ）
-  2. 内容が詳しい記事優先
-  3. 同等なら新しい記事優先
-- 重複か迷う場合は is_duplicate=false にして全部残す（取りこぼし回避）
-- 同じ事象でも明らかに別記事（例: 続報、解説記事）は別グループとする
+- 続報・解説記事など、同じ事象でも独自の追加情報が主体の記事は別扱いにしてよい
+- 重複と判断したら、残す記事(keep)を選ぶ:
+  1. 情報量が多く内容が詳しい記事を最優先（本文が充実、具体的な数字・詳細がある）
+  2. 同等なら一次情報・公式に近いソース優先（自治体公式 > 新聞・テレビ > 転載・まとめ）
+  3. それも同等なら新しい記事優先
+- 残すのは基本1つ。ただし複数の記事がそれぞれ独自の重要な情報を持つ場合
+  （例: 一方は設備詳細、他方は投資計画に詳しい）は複数残してよい
+- 重複かどうか迷う場合は is_duplicate=false にして全部残す（取りこぼし回避を最優先）
 
-出力: groups配列。各groupは
-  - indices: そのグループに属する記事のindex（入力順、0始まり）
-  - canonical_index: indices内で代表に選ぶindex
-  - is_duplicate: 重複と判定するか（trueなら canonical_index以外を落とす）
+出力: groups配列。重複の疑いがある2件以上のグループだけを出力してください（単独記事は出力不要）。
+各groupは
+  - indices: そのグループに属する記事のindex（入力の[番号]、0始まり）
+  - keep_indices: indices内で残す記事のindex（1つ以上）
+  - is_duplicate: 重複と確信できるか（trueなら keep_indices以外を削除する）
   - reason: 簡潔な判断理由
-全indicesがいずれかのgroupに属するように出力してください。
 """
 
 
-def dedup_cluster(client: anthropic.Anthropic, cluster_items: list[dict]) -> tuple[set[str], list[str]]:
-    if len(cluster_items) > MAX_CLUSTER_SIZE:
-        mid = len(cluster_items) // 2
-        d1, l1 = dedup_cluster(client, cluster_items[:mid])
-        d2, l2 = dedup_cluster(client, cluster_items[mid:])
-        return d1 | d2, l1 + l2
-
+def ai_group_duplicates(client: anthropic.Anthropic, pool: list[dict]) -> tuple[set[str], list[str]]:
+    """pool内の重複グループをAIに判定させ、削除すべきURL集合と判定ログを返す"""
     lines = []
-    for i, it in enumerate(cluster_items):
+    for i, it in enumerate(pool):
         lines.append(
-            f"[{i}] {it['published'][:10]} | {it['source']}\n"
-            f"    タイトル: {it['title']}\n"
-            f"    本文冒頭: {it.get('body', '')[:200]}"
+            f"[{i}] {it.get('published', '')[:10]} | {it.get('source', '?')}\n"
+            f"    タイトル: {it.get('title', '')}\n"
+            f"    本文冒頭: {it.get('body', '')[:100]}"
         )
-    user_text = "以下の記事群について重複判定してください。\n\n" + "\n\n".join(lines)
+    user_text = "以下の記事一覧から重複グループを判定してください。\n\n" + "\n\n".join(lines)
 
-    try:
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            system=DEDUP_SYSTEM,
-            messages=[{"role": "user", "content": user_text}],
-            output_config={"format": {"type": "json_schema", "schema": DEDUP_SCHEMA}},
-            timeout=60.0,
-        )
-        text = next((b.text for b in resp.content if b.type == "text"), "")
-        result = json.loads(text)
-    except Exception as e:
-        print(f"  [warn] dedup failed: {type(e).__name__}: {e} → keep all in cluster", flush=True)
-        return set(), [f"AI失敗で全保持({len(cluster_items)}件)"]
+    result = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = client.messages.create(
+                model=MODEL,
+                max_tokens=16000,
+                system=DEDUP_SYSTEM,
+                messages=[{"role": "user", "content": user_text}],
+                output_config={"format": {"type": "json_schema", "schema": DEDUP_SCHEMA}},
+                timeout=180.0,
+            )
+            text = next((b.text for b in resp.content if b.type == "text"), "")
+            result = json.loads(text)
+            break
+        except anthropic.BadRequestError as e:
+            print(f"  [fatal] schema/request error (no retry): {e}", flush=True)
+            return set(), [f"AI失敗で全保持({len(pool)}件)"]
+        except Exception as e:
+            delay = RETRY_BASE_DELAY * (2 ** attempt)
+            print(f"  [retry {attempt+1}/{MAX_RETRIES}] {type(e).__name__}: {e} → wait {delay:.1f}s", flush=True)
+            time.sleep(delay)
+
+    if result is None:
+        print(f"  [warn] dedup failed after retries → keep all", flush=True)
+        return set(), [f"AI失敗で全保持({len(pool)}件)"]
 
     drop_urls = set()
     info = []
     for g in result.get("groups", []):
-        idxs = g.get("indices", [])
-        canonical = g.get("canonical_index")
+        idxs = [i for i in g.get("indices", []) if 0 <= i < len(pool)]
+        keeps = [i for i in g.get("keep_indices", []) if i in idxs]
         is_dup = g.get("is_duplicate", False)
-        if not is_dup or canonical is None or canonical not in idxs:
+        if not is_dup or not keeps or len(idxs) < 2:
             continue
-        for i in idxs:
-            if i != canonical and 0 <= i < len(cluster_items):
-                drop_urls.add(cluster_items[i]["url"])
+        drops = [i for i in idxs if i not in keeps]
+        if not drops:
+            continue
+        for i in drops:
+            drop_urls.add(pool[i]["url"])
+        keep_titles = " / ".join(pool[i]["title"][:30] for i in keeps)
         info.append(
-            f"代表={cluster_items[canonical]['title'][:30]}, "
-            f"drop {len([i for i in idxs if i != canonical])}件: {g.get('reason','')[:60]}"
+            f"残={keep_titles}, drop {len(drops)}件: {g.get('reason', '')[:80]}"
         )
     return drop_urls, info
 
@@ -169,83 +166,44 @@ def main():
     if not api_key:
         raise SystemExit("ANTHROPIC_API_KEY not set")
 
-    client = anthropic.Anthropic(api_key=api_key, timeout=60.0, max_retries=1)
+    client = anthropic.Anthropic(api_key=api_key, timeout=180.0, max_retries=0)
     archive = load_archive()
     if not archive:
         print("[done] archive empty", flush=True)
         return
 
-    print(f"[start] archive size: {len(archive)}", flush=True)
+    print(f"[start] archive size: {len(archive)}, model={MODEL}", flush=True)
 
     now_utc = datetime.now(timezone.utc)
     today_str = now_utc.date().isoformat()
     recent_cutoff = now_utc - timedelta(days=RECENT_ARCHIVE_DAYS)
 
-    new_indices = []
-    candidate_indices = []
-    for i, it in enumerate(archive):
-        added_at = it.get("_added_at", "")
-        if added_at.startswith(today_str):
-            new_indices.append(i)
-        pub_dt = parse_date(it.get("published", ""))
-        if pub_dt >= recent_cutoff:
-            candidate_indices.append(i)
-
-    if not new_indices:
-        print("[done] no items added today, skip dedup", flush=True)
+    has_new_today = any(it.get("_added_at", "").startswith(today_str) for it in archive)
+    force = os.getenv("FORCE_DEDUP", "") == "1"
+    if not has_new_today and not force:
+        print("[done] no items added today, skip dedup (set FORCE_DEDUP=1 to run anyway)", flush=True)
         return
 
-    new_set = set(new_indices)
-    cand_set = set(candidate_indices) | new_set
-    cand_list = sorted(cand_set)
-    print(f"  new_today={len(new_indices)}, candidate_pool(recent {RECENT_ARCHIVE_DAYS}d)={len(cand_list)}", flush=True)
+    pool = [it for it in archive if parse_date(it.get("published", "")) >= recent_cutoff]
+    pool.sort(key=lambda x: x.get("published", ""), reverse=True)
+    if len(pool) > MAX_POOL:
+        print(f"  [warn] pool {len(pool)} > {MAX_POOL}, truncating to most recent {MAX_POOL}", flush=True)
+        pool = pool[:MAX_POOL]
 
-    bigrams = {i: title_bigrams(archive[i]["title"]) for i in cand_list}
-    dates = {i: parse_date(archive[i].get("published", "")) for i in cand_list}
+    if len(pool) < 2:
+        print("[done] pool too small, nothing to dedup", flush=True)
+        return
 
-    parent = {i: i for i in cand_list}
+    print(f"  [pool] {len(pool)} items (last {RECENT_ARCHIVE_DAYS}d) → AI grouping", flush=True)
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
+    drop_urls, info = ai_group_duplicates(client, pool)
+    for line in info:
+        print(f"      {line}", flush=True)
 
-    def union(a, b):
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
-    for i_pos, i in enumerate(cand_list):
-        for j in cand_list[i_pos + 1:]:
-            if i not in new_set and j not in new_set:
-                continue
-            if abs((dates[i] - dates[j]).days) > DATE_WINDOW_DAYS:
-                continue
-            if jaccard(bigrams[i], bigrams[j]) >= SIMILARITY_THRESHOLD:
-                union(i, j)
-
-    clusters: dict[int, list[int]] = {}
-    for i in cand_list:
-        clusters.setdefault(find(i), []).append(i)
-    cluster_lists = [c for c in clusters.values() if len(c) >= 2 and any(i in new_set for i in c)]
-
-    print(f"  [clusters] {len(cluster_lists)} clusters with new items", flush=True)
-
-    all_drop_urls: set[str] = set()
-    for c_no, cluster in enumerate(cluster_lists, 1):
-        cluster_items = [archive[i] for i in cluster]
-        drop_urls, info = dedup_cluster(client, cluster_items)
-        all_drop_urls |= drop_urls
-        print(f"  [cluster {c_no}/{len(cluster_lists)}] size={len(cluster)} drop={len(drop_urls)}", flush=True)
-        for line in info:
-            print(f"      {line}", flush=True)
-        time.sleep(0.3)
-
-    if all_drop_urls:
-        kept = [it for it in archive if it["url"] not in all_drop_urls]
+    if drop_urls:
+        kept = [it for it in archive if it["url"] not in drop_urls]
         save_archive(kept)
-        print(f"[done] dropped {len(all_drop_urls)} duplicates, archive: {len(archive)} → {len(kept)}", flush=True)
+        print(f"[done] dropped {len(drop_urls)} duplicates, archive: {len(archive)} → {len(kept)}", flush=True)
     else:
         save_archive(archive)
         print(f"[done] no duplicates dropped, archive size: {len(archive)} (sorted)", flush=True)
