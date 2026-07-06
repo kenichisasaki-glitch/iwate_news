@@ -5,7 +5,9 @@
 
 sources:
   # ---- Yahoo!ニュース 岩手ローカルメディア ----
-  - { name: "みんけい(盛岡経済新聞)", url: "https://news.yahoo.co.jp/rss/media/minkei/all.xml", type: rss }
+  # 注: Yahoo!の minkei/all.xml は「みんなの経済新聞ネットワーク」全国全系列
+  # （飯田経済新聞・沼津経済新聞等）が混ざるため、盛岡経済新聞の自社RSSを使う
+  - { name: "盛岡経済新聞", url: "https://morioka.keizai.biz/rss.xml", type: rss }
   - { name: "IBC岩手放送", url: "https://news.yahoo.co.jp/rss/media/imptrw/all.xml", type: rss }
   - { name: "IAT岩手朝日テレビ", url: "https://news.yahoo.co.jp/rss/media/iat/all.xml", type: rss }
   - { name: "IBC県内", url: "https://news.yahoo.co.jp/rss/media/ibciwatev/all.xml", type: rss }
