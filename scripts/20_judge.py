@@ -73,9 +73,13 @@ def append_to_archive(items: list[dict]):
             f.write(json.dumps(it, ensure_ascii=False) + "\n")
 
 
+# reason を先頭に置き、理由を書いてから relevant を決めさせる
+# （結論が先だと理由と矛盾した判定を出すことがある: 熱海の宿泊施設を
+#   「岩手県に関連しないため除外すべき」と書きつつ relevant=true にした事例）
 JUDGE_SCHEMA = {
     "type": "object",
     "properties": {
+        "reason": {"type": "string"},
         "relevant": {"type": "boolean"},
         "category": {
             "type": "string",
@@ -87,9 +91,8 @@ JUDGE_SCHEMA = {
         },
         "municipality": {"type": "string"},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-        "reason": {"type": "string"},
     },
-    "required": ["relevant", "category", "municipality", "confidence", "reason"],
+    "required": ["reason", "relevant", "category", "municipality", "confidence"],
     "additionalProperties": False,
 }
 
