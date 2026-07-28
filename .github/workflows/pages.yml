@@ -70,7 +70,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # 毎日必ず更新するファイルでcron自動停止(60日無活動)を防ぐ
           date -u +"%Y-%m-%dT%H:%M:%SZ" > data/last_run.txt
-          git add data/archive.jsonl data/last_run.txt
+          git add data/archive.jsonl data/dropped.jsonl data/last_run.txt
           if git diff --cached --quiet; then
             echo "No changes (unexpected)"
           else

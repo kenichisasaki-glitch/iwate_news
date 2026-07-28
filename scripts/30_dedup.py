@@ -19,6 +19,8 @@ DATA_DIR = ROOT / "data"
 
 MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 RECENT_ARCHIVE_DAYS = int(os.getenv("DEDUP_WINDOW_DAYS", "14"))
+RECENT_ADDED_DAYS = 3   # 「最近アーカイブに追加された」とみなす日数（_added_at基準）
+CONTEXT_DAYS = 2        # 最近追加分の公開日±この日数の記事を比較対象に含める
 MAX_POOL = 120          # 1回のAI呼び出しに渡す記事数の上限
 POOL_OVERLAP = 10       # チャンク間の重なり（境界をまたぐ重複の取りこぼし対策）
 MAX_RETRIES = 3
@@ -169,6 +171,7 @@ def main():
         raise SystemExit("ANTHROPIC_API_KEY not set")
 
     client = anthropic.Anthropic(api_key=api_key, timeout=180.0, max_retries=0)
+    (DATA_DIR / "dropped.jsonl").touch(exist_ok=True)  # workflowのgit add対策
     archive = load_archive()
     if not archive:
         print("[done] archive empty", flush=True)
@@ -186,7 +189,28 @@ def main():
         print("[done] no items added today, skip dedup (set FORCE_DEDUP=1 to run anyway)", flush=True)
         return
 
-    pool = [it for it in archive if parse_date(it.get("published", "")) >= recent_cutoff]
+    # プール選定: 公開日が直近RECENT_ARCHIVE_DAYS日 に加えて、
+    # (a) 最近アーカイブに追加された記事（公開日が古い配信転載の再流入を含む）
+    # (b) その公開日±CONTEXT_DAYS日の記事（比較相手となる既存記事）
+    # を含める。公開日だけで絞ると、遅れて流入した同一事象の記事が
+    # 一度もAIに見せられないまま素通りするため。
+    added_cutoff = now_utc - timedelta(days=RECENT_ADDED_DAYS)
+    pool_idx = set()
+    recent_added_pubs = []
+    for i, it in enumerate(archive):
+        if parse_date(it.get("published", "")) >= recent_cutoff:
+            pool_idx.add(i)
+        if parse_date(it.get("_added_at", "1970-01-01T00:00:00+00:00")) >= added_cutoff:
+            pool_idx.add(i)
+            recent_added_pubs.append(parse_date(it.get("published", "")))
+    for i, it in enumerate(archive):
+        if i in pool_idx:
+            continue
+        p = parse_date(it.get("published", ""))
+        if any(abs((p - np).days) <= CONTEXT_DAYS for np in recent_added_pubs):
+            pool_idx.add(i)
+
+    pool = [archive[i] for i in pool_idx]
     pool.sort(key=lambda x: x.get("published", ""), reverse=True)
 
     if len(pool) < 2:
@@ -216,6 +240,16 @@ def main():
     if drop_urls:
         kept = [it for it in archive if it["url"] not in drop_urls]
         save_archive(kept)
+        # 削除した記事を記録し、10_fetchが同一見出しの再流入を弾けるようにする
+        with open(DATA_DIR / "dropped.jsonl", "a", encoding="utf-8") as f:
+            for it in archive:
+                if it["url"] in drop_urls:
+                    f.write(json.dumps({
+                        "url": it["url"],
+                        "title": it.get("title", ""),
+                        "published": it.get("published", ""),
+                        "dropped_at": now_utc.isoformat(),
+                    }, ensure_ascii=False) + "\n")
         print(f"[done] dropped {len(drop_urls)} duplicates, archive: {len(archive)} → {len(kept)}", flush=True)
     else:
         save_archive(archive)

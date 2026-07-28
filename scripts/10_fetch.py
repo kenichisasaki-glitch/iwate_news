@@ -290,10 +290,35 @@ def fetch_one(src: dict, age_cutoff: datetime) -> list[dict]:
     return []
 
 
-def load_existing_archive_urls() -> set[str]:
-    """既にアーカイブ・キャッシュ済みのURLを読み込み、fetch段階でスキップ"""
-    seen = set()
-    for path in [DATA_DIR / "archive.jsonl"]:
+# 見出し末尾の媒体名（「- 四国新聞」「(時事通信)」等）にマッチするパターン
+_MEDIA_SEG = (
+    r"[^-|()]{0,30}?(新聞|ニュース|放送|テレビ|通信|経済|NEWS|DIGITAL|デジタル|"
+    r"オンライン|タイムス|日報|日日|ファイナンス|dメニュー|47NEWS|めんこい|"
+    r"PR TIMES|PRTIMES|ドットコム|クロステック|Web)[^-|()]{0,15}"
+)
+
+
+def title_key(title: str) -> str:
+    """媒体名サフィックスを除去し記号を潰した、記事同定用のキー。
+    共同通信・時事通信の配信記事が地方紙サイト経由で別URL・同一見出しのまま
+    何日も流入し続けるため、URLではなく見出しで同一記事を判定する"""
+    s = unicodedata.normalize("NFKC", title or "").strip()
+    for _ in range(3):
+        s2 = re.sub(rf"\s*[-|/]\s*{_MEDIA_SEG}\s*$", "", s)
+        s2 = re.sub(rf"\s*\({_MEDIA_SEG}\)\s*$", "", s2)
+        if s2 == s:
+            break
+        s = s2
+    return re.sub(r"[\s\[\]【】「」『』()|・,，、。.\-_/:：=!?！?？]+", "", s).lower()
+
+
+def load_known() -> tuple[set[str], set[str]]:
+    """既知のURL集合と見出しキー集合を返す。
+    アーカイブ + 判定キャッシュ + 重複削除済み記録(dropped.jsonl)を対象とし、
+    一度削除した記事が別URLで再流入しても fetch 段階で弾けるようにする"""
+    seen_urls = set()
+    seen_keys = set()
+    for path in [DATA_DIR / "archive.jsonl", DATA_DIR / "dropped.jsonl"]:
         if not path.exists():
             continue
         with open(path, "r", encoding="utf-8") as f:
@@ -301,30 +326,35 @@ def load_existing_archive_urls() -> set[str]:
                 line = line.strip()
                 if line:
                     try:
-                        seen.add(json.loads(line)["url"])
+                        j = json.loads(line)
+                        seen_urls.add(j["url"])
+                        k = title_key(j.get("title", ""))
+                        if len(k) >= 10:
+                            seen_keys.add(k)
                     except Exception:
                         pass
     cache_path = DATA_DIR / "cache" / "judged_cache.json"
     if cache_path.exists():
         try:
             cache = json.loads(cache_path.read_text(encoding="utf-8"))
-            seen.update(cache.keys())
+            seen_urls.update(cache.keys())
         except Exception:
             pass
-    return seen
+    return seen_urls, seen_keys
 
 
 def main():
     from datetime import timedelta
     age_cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_AGE_DAYS)
     sources = load_sources()
-    already_seen = load_existing_archive_urls()
-    print(f"[start] {len(sources)} sources, {len(already_seen)} URLs already in archive/cache, MAX_AGE_DAYS={MAX_AGE_DAYS}")
+    already_seen, known_keys = load_known()
+    print(f"[start] {len(sources)} sources, {len(already_seen)} URLs / {len(known_keys)} title-keys known, MAX_AGE_DAYS={MAX_AGE_DAYS}")
 
     all_items = []
     seen_urls = set()
     n_skip_archived = 0
     n_skip_excluded = 0
+    n_skip_title = 0
     for src in sources:
         items = fetch_one(src, age_cutoff)
         for it in items:
@@ -334,12 +364,18 @@ def main():
                 continue
             if url in seen_urls:
                 continue
+            tkey = title_key(it.get("title", ""))
+            if len(tkey) >= 10 and tkey in known_keys:
+                n_skip_title += 1
+                continue
             # 楽待 (rakumachi.jp) は不動産投資物件の売買広告のため除外
             title_lower = it["title"].lower()
             if "rakumachi" in title_lower or "楽待" in it["title"]:
                 n_skip_excluded += 1
                 continue
             seen_urls.add(url)
+            if len(tkey) >= 10:
+                known_keys.add(tkey)
             all_items.append(it)
 
     out = DATA_DIR / "raw_items.jsonl"
@@ -347,7 +383,7 @@ def main():
         for it in all_items:
             f.write(json.dumps(it, ensure_ascii=False) + "\n")
 
-    print(f"[done] {len(all_items)} new items (skipped {n_skip_archived} already archived, {n_skip_excluded} excluded) → {out}")
+    print(f"[done] {len(all_items)} new items (skipped {n_skip_archived} already archived, {n_skip_title} same-title, {n_skip_excluded} excluded) → {out}")
 
 
 if __name__ == "__main__":
