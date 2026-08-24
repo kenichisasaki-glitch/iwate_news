@@ -3,3 +3,4 @@ anthropic>=0.40.0
 PyYAML
 requests
 beautifulsoup4
+httpx
