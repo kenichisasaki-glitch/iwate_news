@@ -17,7 +17,7 @@ import anthropic
 ROOT = Path(os.getenv("IWATE_ROOT", ".")).resolve()
 DATA_DIR = ROOT / "data"
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 RECENT_ARCHIVE_DAYS = int(os.getenv("DEDUP_WINDOW_DAYS", "14"))
 RECENT_ADDED_DAYS = 3   # 「最近アーカイブに追加された」とみなす日数（_added_at基準）
 CONTEXT_DAYS = 2        # 最近追加分の公開日±この日数の記事を比較対象に含める

@@ -22,3 +22,6 @@ Thumbs.db
 data/archive.jsonl.bak*
 
 # 重要: data/archive.jsonl は永続化のためコミット対象に含める
+
+# 旧PCから持ってきたvenv(退避)
+.venv_oldpc/
