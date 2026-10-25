@@ -3,6 +3,7 @@
 # アーカイブは累積成長、表示は直近 DISPLAY_DAYS 日まで（環境変数で調整可）
 
 import os
+import csv
 import html
 import json
 from datetime import datetime, timedelta, timezone
@@ -92,6 +93,24 @@ def load_archive() -> list[dict]:
             if line:
                 items.append(json.loads(line))
     return items
+
+
+def apply_municipality_overrides(items: list[dict]) -> int:
+    """config/municipality_overrides.csv（url,municipality,...）でAI判定の市町村を手修正する。
+    表示用にだけ差し替え、archive.jsonl は書き換えない。"""
+    path = ROOT / "config" / "municipality_overrides.csv"
+    if not path.exists():
+        return 0
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        overrides = {r["url"].strip(): r["municipality"].strip()
+                     for r in csv.DictReader(f) if (r.get("url") or "").strip() and (r.get("municipality") or "").strip()}
+    n = 0
+    for it in items:
+        m = overrides.get(it.get("url"))
+        if m:
+            it["judgment"] = {**(it.get("judgment") or {}), "municipality": m}
+            n += 1
+    return n
 
 
 def filter_recent(items: list[dict], days: int) -> list[dict]:
@@ -228,6 +247,8 @@ def build_html(items: list[dict]) -> str:
 
 def main():
     archive = load_archive()
+    n_fixed = apply_municipality_overrides(archive)
+    print(f"[build] municipality overrides applied: {n_fixed}")
     recent = filter_recent(archive, DISPLAY_DAYS)
     print(f"[build] archive={len(archive)} → display(last {DISPLAY_DAYS}d)={len(recent)}")
     out = SITE_DIR / "index.html"
