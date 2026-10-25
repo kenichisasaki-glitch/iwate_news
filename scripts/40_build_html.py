@@ -32,7 +32,7 @@ CATEGORY_ORDER = [
     "その他",
 ]
 
-# 市町村ソート用の並び（県の市町村コード順）。ここにない値（岩手県全域・不明など）は末尾
+# 市町村プルダウンの並び（県の市町村コード順）。ここにない値（岩手県全域・不明など）は末尾
 MUNI_ORDER = [
     "盛岡市", "宮古市", "大船渡市", "花巻市", "北上市", "久慈市", "遠野市", "一関市",
     "陸前高田市", "釜石市", "二戸市", "八幡平市", "奥州市", "滝沢市",
@@ -42,57 +42,33 @@ MUNI_ORDER = [
     "岩手県全域", "岩手県",
 ]
 
-# 絞り込み・並び替え・CSV出力（ブラウザ側で動作。JSが無効でも従来どおり日付順で表示される）
+# 市町村の絞り込みと、表示中の記事のCSV出力（ブラウザ側で動作。JSが無効でも全件が日付順で表示される）
 SCRIPT = """
 (function(){
-  var list=document.getElementById('list');
-  var items=Array.prototype.slice.call(list.querySelectorAll('.item'));
-  var order=JSON.parse(document.getElementById('muni-order').textContent);
-  var sortSel=document.getElementById('sort'), muniSel=document.getElementById('muni');
-  var countEl=document.getElementById('selcount'), csvBtn=document.getElementById('csv');
-  function rank(m){var i=order.indexOf(m);return i<0?order.length:i;}
-  function header(text){var d=document.createElement('div');d.className='date';d.textContent=text;return d;}
+  var days=Array.prototype.slice.call(document.querySelectorAll('#list .day'));
+  var items=Array.prototype.slice.call(document.querySelectorAll('#list .item'));
+  var muniSel=document.getElementById('muni'), countEl=document.getElementById('shown');
+  function visible(){return items.filter(function(el){return !el.hidden;});}
   function render(){
-    var byMuni=sortSel.value==='muni', muni=muniSel.value;
-    document.body.classList.toggle('by-muni',byMuni);
-    var shown=items.filter(function(el){return !muni||el.dataset.muni===muni;});
-    shown.sort(function(a,b){
-      if(byMuni){var r=rank(a.dataset.muni)-rank(b.dataset.muni);if(r)return r;
-        if(a.dataset.muni!==b.dataset.muni)return a.dataset.muni<b.dataset.muni?-1:1;}
-      return a.dataset.date<b.dataset.date?1:a.dataset.date>b.dataset.date?-1:(+a.dataset.idx)-(+b.dataset.idx);
-    });
-    list.textContent='';
-    var last=null;
-    shown.forEach(function(el){
-      var key=byMuni?el.dataset.muni:el.dataset.date;
-      if(key!==last){list.appendChild(header(byMuni?'📍 '+key:'📅 '+key));last=key;}
-      list.appendChild(el);
-    });
-    document.getElementById('shown').textContent=shown.length;
+    var muni=muniSel.value;
+    items.forEach(function(el){el.hidden=!!muni&&el.dataset.muni!==muni;});
+    days.forEach(function(d){d.hidden=!d.querySelector('.item:not([hidden])');});
+    countEl.textContent=visible().length;
   }
-  function checked(){return items.filter(function(el){return el.querySelector('.pick').checked;});}
-  function updateCount(){var n=checked().length;countEl.textContent=n;csvBtn.disabled=!n;}
   function q(v){return '"'+String(v==null?'':v).replace(/"/g,'""')+'"';}
-  sortSel.addEventListener('change',render);
   muniSel.addEventListener('change',render);
-  list.addEventListener('change',function(e){if(e.target.classList.contains('pick'))updateCount();});
-  document.getElementById('all').addEventListener('click',function(){
-    list.querySelectorAll('.pick').forEach(function(c){c.checked=true;});updateCount();});
-  document.getElementById('none').addEventListener('click',function(){
-    items.forEach(function(el){el.querySelector('.pick').checked=false;});updateCount();});
-  csvBtn.addEventListener('click',function(){
+  document.getElementById('csv').addEventListener('click',function(){
     var rows=[['公開日','市町村','カテゴリ','タイトル','出典','URL']];
-    checked().sort(function(a,b){return a.dataset.date<b.dataset.date?1:a.dataset.date>b.dataset.date?-1:0;})
-      .forEach(function(el){var d=el.dataset,a=el.querySelector('h3 a');
-        rows.push([d.date,d.muni,d.cat,a.textContent,d.src,a.href]);});
+    visible().forEach(function(el){var d=el.dataset,a=el.querySelector('h3 a');
+      rows.push([d.date,d.muni,d.cat,a.textContent,d.src,a.href]);});
     var csv='\\ufeff'+rows.map(function(r){return r.map(q).join(',');}).join('\\r\\n');
     var a=document.createElement('a');
     a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
-    var t=new Date();
-    a.download='iwate_news_'+t.getFullYear()+('0'+(t.getMonth()+1)).slice(-2)+('0'+t.getDate()).slice(-2)+'.csv';
+    var t=new Date(), m=muniSel.value;
+    a.download='iwate_news_'+(m?m+'_':'')+t.getFullYear()+('0'+(t.getMonth()+1)).slice(-2)+('0'+t.getDate()).slice(-2)+'.csv';
     document.body.appendChild(a);a.click();a.remove();
   });
-  render();updateCount();
+  render();
 })();
 """
 
@@ -160,11 +136,7 @@ def build_html(items: list[dict]) -> str:
     .toolbar{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #ddd;padding:8px 0;display:flex;gap:8px 14px;flex-wrap:wrap;align-items:center;font-size:.9rem}
     .toolbar select,.toolbar button{font-size:.9rem;padding:3px 8px}
     .toolbar .count{color:#555}
-    .item{display:flex;gap:10px;align-items:flex-start}
-    .item .pick{margin-top:5px;width:17px;height:17px;flex:none}
-    .item .body{flex:1;min-width:0}
-    .item .d{display:none}
-    .by-muni .item .d{display:inline}
+    [hidden]{display:none!important}
     @media (max-width:600px){.toolbar{position:static}}
     """
 
@@ -180,13 +152,9 @@ def build_html(items: list[dict]) -> str:
     )
     toolbar = (
         '<div class="toolbar">'
-        '<label>並び順 <select id="sort"><option value="date">日付順</option>'
-        '<option value="muni">市町村順</option></select></label>'
         f'<label>市町村 <select id="muni"><option value="">すべて</option>{muni_options}</select></label>'
         '<span class="count">表示 <b id="shown">0</b> 件</span>'
-        '<button type="button" id="all">表示中をすべて選択</button>'
-        '<button type="button" id="none">選択解除</button>'
-        '<button type="button" id="csv" disabled>選択をCSV出力（<span id="selcount">0</span>件）</button>'
+        '<button type="button" id="csv">CSV出力</button>'
         "</div>"
     )
 
@@ -214,9 +182,8 @@ def build_html(items: list[dict]) -> str:
         '<div id="list">',
     ]
 
-    idx = 0
     for day in sorted(groups.keys(), reverse=True):
-        parts.append(f'<div class="date">📅 {day}</div>')
+        parts.append(f'<section class="day"><div class="date">📅 {day}</div>')
         day_items = sorted(
             groups[day],
             key=lambda x: CATEGORY_ORDER.index((x.get("judgment") or {}).get("category") or "その他")
@@ -238,24 +205,20 @@ def build_html(items: list[dict]) -> str:
             cat_badge = f'<span class="badge cat-{html.escape(cat)}">{html.escape(cat)}</span>' if cat else ""
             muni_badge = f'<span class="badge muni">{html.escape(muni)}</span>' if muni else ""
             data_attrs = (
-                f'data-idx="{idx}" data-date="{html.escape(day)}" '
+                f'data-date="{html.escape(day)}" '
                 f'data-muni="{html.escape(muni or "不明")}" data-cat="{html.escape(cat)}" '
                 f'data-src="{src}"'
             )
-            idx += 1
             parts.append(
                 f'<div class="item" {data_attrs}>'
-                f'<input type="checkbox" class="pick" aria-label="選択">'
-                f'<div class="body">'
                 f'<h3><a href="{url}" target="_blank" rel="noopener">{title}</a></h3>'
-                f'<div class="meta">{cat_badge}{muni_badge}<span>出典: {src}</span>'
-                f'<span class="d">📅 {html.escape(day)}</span></div>'
-                f"</div></div>"
+                f'<div class="meta">{cat_badge}{muni_badge}<span>出典: {src}</span></div>'
+                f"</div>"
             )
+        parts.append("</section>")
 
     parts += [
         "</div>",
-        f'<script type="application/json" id="muni-order">{json.dumps(MUNI_ORDER, ensure_ascii=False)}</script>',
         f"<script>{SCRIPT}</script>",
         '<footer><a href="https://www.greo-jp.com/" target="_blank">Operated by GREO</a></footer>',
         "</body></html>",
